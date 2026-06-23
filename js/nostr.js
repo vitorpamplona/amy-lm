@@ -148,6 +148,34 @@ let subCounter = 0;
 function nextSubId() { return 'amy' + (++subCounter); }
 
 /**
+ * Client-side NIP-01 filter match. Relays are not trusted to return only what
+ * we asked for — some send spam, leak events from other subscriptions, or have
+ * over-broad indexes — so we re-check every event ourselves. This is essential
+ * for pagination: junk must NOT count toward the per-round tally (or a round of
+ * pure junk looks non-empty and the until-cursor never terminates) nor feed the
+ * cursor, and it must never reach the app. The `search` field is full-text and
+ * relay-defined, so only the structured constraints are validated here.
+ */
+function matchesFilter(filter, ev) {
+  if (!ev || typeof ev !== 'object' || !ev.id) return false;
+  if (filter.ids && !filter.ids.includes(ev.id)) return false;
+  if (filter.authors && !filter.authors.includes(ev.pubkey)) return false;
+  if (filter.kinds && !filter.kinds.includes(ev.kind)) return false;
+  if (filter.since !== undefined && !(ev.created_at >= filter.since)) return false;
+  if (filter.until !== undefined && !(ev.created_at <= filter.until)) return false;
+  for (const key in filter) { // '#e', '#p', '#t', … indexed single-letter tag filters
+    if (key.length !== 2 || key[0] !== '#') continue;
+    const want = filter[key];
+    if (!Array.isArray(want) || !want.length) continue;
+    const letter = key[1];
+    if (!(ev.tags || []).some((t) => t[0] === letter && want.includes(t[1]))) return false;
+  }
+  return true;
+}
+/** True if the event satisfies at least one filter in the REQ (NIP-01 OR). */
+function matchesAny(filterArr, ev) { return filterArr.some((f) => matchesFilter(f, ev)); }
+
+/**
  * Low-level one-round primitive: a SINGLE REQ to ONE relay with the given
  * filter(s). Resolves with that relay's events once it sends EOSE or goes
  * silent for `timeout` ms.
@@ -174,7 +202,10 @@ function reqOnce(url, filterArr, opts = {}) {
       ws = connect(url);
     } catch { return finish(); }
     ws._subs.set(subId, {
-      onEvent: (ev) => { if (ev && ev.id) events.push(ev); bump(); },
+      // Only keep events that actually match the REQ; a relay sending junk must
+      // not pollute results or pagination. Still bump on any message — the relay
+      // is alive and working, so don't let unmatched noise trip the idle timer.
+      onEvent: (ev) => { if (matchesAny(filterArr, ev)) events.push(ev); bump(); },
       onEose: finish,
       filters: filterArr, // kept so a NIP-42 auth-required REQ can be replayed
     });
@@ -232,10 +263,16 @@ async function paginate(url, filter, opts = {}) {
     if (until === undefined) delete f.until; else f.until = until;
     if (remaining !== undefined) f.limit = remaining;
     const evs = await reqOnce(url, [f], opts);
+    // Count and advance the cursor on NEWLY-SEEN events only. A relay that
+    // re-sends the same page every round (ignoring `until`) then yields zero new
+    // events, which stops us — instead of looping forever on repeats.
     let added = 0, oldest = Infinity;
     for (const ev of evs) {
-      if (ev.id && !collected.has(ev.id)) { collected.set(ev.id, ev); added++; if (onEvent && !aborted()) onEvent(ev); }
-      if (typeof ev.created_at === 'number' && ev.created_at < oldest) oldest = ev.created_at;
+      if (ev.id && !collected.has(ev.id)) {
+        collected.set(ev.id, ev); added++;
+        if (typeof ev.created_at === 'number' && ev.created_at < oldest) oldest = ev.created_at;
+        if (onEvent && !aborted()) onEvent(ev);
+      }
     }
     if (singleRound || added === 0 || oldest === Infinity) break;
     until = oldest - 1;                               // walk strictly older
@@ -322,7 +359,9 @@ export function subscribe(relays, filters, onEvent, opts = {}) {
       let ws;
       try { ws = connect(url); } catch { continue; }
       ws._subs.set(subId, {
-        onEvent: (ev) => deliver(ev, url),
+        // Validate live events too: a relay must not push events that don't
+        // match (incl. old events on a since=now live sub — only future ones).
+        onEvent: (ev) => { if (matchesAny(liveFilters, ev)) deliver(ev, url); },
         filters: liveFilters, // kept so a NIP-42 auth-required REQ can be replayed
       });
       whenOpen(ws).then(() => ws.send(JSON.stringify(['REQ', subId, ...liveFilters]))).catch(() => {});
