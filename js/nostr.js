@@ -1,6 +1,6 @@
 // nostr.js — a tiny, dependency-free Nostr toolkit for the browser.
-// Relay pool (NIP-01 REQ/EVENT/EOSE over WebSocket), NIP-07 signer access,
-// and NIP-19 bech32 (npub/nsec/note) encode/decode helpers.
+// Relay pool (NIP-01 REQ/EVENT/EOSE over WebSocket), NIP-42 relay AUTH,
+// NIP-07 signer access, and NIP-19 bech32 (npub/nsec/note) encode/decode helpers.
 
 // ---------------------------------------------------------------------------
 // NIP-07 signer (browser extension exposes window.nostr)
@@ -26,19 +26,76 @@ function connect(url) {
   let ws = sockets.get(url);
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return ws;
   ws = new WebSocket(url);
-  ws._subs = new Map(); // subId -> { onEvent, onEose }
+  ws._subs = new Map(); // subId -> { onEvent, onEose, filters }
+  ws._authWaiters = new Map(); // auth event id -> { resolve, reject }
+  ws._challenge = null; // latest NIP-42 challenge string, if the relay sent one
   ws.addEventListener('message', (m) => {
     let data;
     try { data = JSON.parse(m.data); } catch { return; }
-    const [type, subId, payload] = data;
-    const sub = ws._subs.get(subId);
-    if (!sub) return;
-    if (type === 'EVENT') sub.onEvent(payload);
-    else if (type === 'EOSE') sub.onEose && sub.onEose();
+    const [type, a, b] = data;
+    if (type === 'EVENT') { const sub = ws._subs.get(a); if (sub) sub.onEvent(b); return; }
+    if (type === 'EOSE') { const sub = ws._subs.get(a); if (sub && sub.onEose) sub.onEose(); return; }
+    // NIP-42: relay challenges us. Remember it; we only answer if asked (below).
+    if (type === 'AUTH') { ws._challenge = a; return; }
+    // OK for one of our AUTH events -> settle the pending authenticate() call.
+    if (type === 'OK') {
+      const w = ws._authWaiters.get(a);
+      if (w) { ws._authWaiters.delete(a); b ? w.resolve() : w.reject(new Error(data[3] || 'relay rejected AUTH')); }
+      return;
+    }
+    // CLOSED with "auth-required" means this REQ needs NIP-42 auth first. Try to
+    // authenticate, then replay the REQ; otherwise treat it as the stream's end.
+    if (type === 'CLOSED') {
+      const sub = ws._subs.get(a);
+      if (!sub) return;
+      if (/^auth-required/i.test(String(b || '')) && ws._challenge && !sub._authTried) {
+        sub._authTried = true;
+        authenticate(ws, url)
+          .then(() => { if (ws._subs.has(a)) { try { ws.send(JSON.stringify(['REQ', a, ...sub.filters])); } catch {} } })
+          .catch(() => sub.onEose && sub.onEose());
+      } else if (sub.onEose) {
+        sub.onEose();
+      }
+      return;
+    }
   });
   ws.addEventListener('close', () => { if (sockets.get(url) === ws) sockets.delete(url); });
   sockets.set(url, ws);
   return ws;
+}
+
+/**
+ * NIP-42: answer a relay's AUTH challenge. We sign an ephemeral kind 22242
+ * event (tagging the relay url and the challenge) with the NIP-07 signer and
+ * send it as ["AUTH", event]. Resolves once the relay replies OK, rejects if it
+ * refuses, times out, or there is no signer to authenticate with. We do this
+ * lazily — only when a relay actually withholds data — so public relays never
+ * trigger a signature prompt.
+ */
+function authenticate(ws, url) {
+  const challenge = ws._challenge;
+  if (!challenge) return Promise.reject(new Error('relay sent no AUTH challenge'));
+  if (!signer.available()) return Promise.reject(new Error('relay requires NIP-42 auth but no signer is connected'));
+  if (ws._authPromise && ws._authedChallenge === challenge) return ws._authPromise;
+  ws._authedChallenge = challenge;
+  ws._authPromise = (async () => {
+    const pubkey = await signer.getPublicKey();
+    const event = await signer.signEvent({
+      kind: 22242,
+      content: '',
+      tags: [['relay', url], ['challenge', challenge]],
+      created_at: Math.floor(Date.now() / 1000),
+      pubkey,
+    });
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => { if (ws._authWaiters.delete(event.id)) reject(new Error('relay AUTH timed out')); }, 5000);
+      const settle = (fn) => (v) => { clearTimeout(t); fn(v); };
+      ws._authWaiters.set(event.id, { resolve: settle(resolve), reject: settle(reject) });
+      try { ws.send(JSON.stringify(['AUTH', event])); }
+      catch (e) { clearTimeout(t); ws._authWaiters.delete(event.id); reject(e); }
+    });
+  })();
+  return ws._authPromise;
 }
 
 function whenOpen(ws) {
@@ -78,6 +135,7 @@ export async function query(relays, filters, opts = {}) {
     ws._subs.set(subId, {
       onEvent: (ev) => { if (ev && ev.id && !seen.has(ev.id)) seen.set(ev.id, ev); },
       onEose: finish,
+      filters: filterArr, // kept so a NIP-42 auth-required REQ can be replayed
     });
     cleanup = () => {
       ws._subs.delete(subId);
@@ -111,6 +169,7 @@ export function subscribe(relays, filters, onEvent, opts = {}) {
     ws._subs.set(subId, {
       onEvent: (ev) => { if (ev && ev.id && !seen.has(ev.id)) { seen.add(ev.id); onEvent(ev, url); } },
       onEose: opts.onEose,
+      filters: filterArr, // kept so a NIP-42 auth-required REQ can be replayed
     });
     whenOpen(ws).then(() => ws.send(JSON.stringify(['REQ', subId, ...filterArr]))).catch(() => {});
     closers.push(() => {
@@ -139,13 +198,22 @@ export async function publish(relays, draft) {
   const event = await signer.signEvent(unsigned);
 
   const results = await Promise.all(relays.map((url) => new Promise((resolve) => {
-    let ws;
+    let ws, retriedAuth = false;
     try { ws = connect(url); } catch { return resolve({ url, ok: false, error: 'connect failed' }); }
     const onMsg = (m) => {
       let d; try { d = JSON.parse(m.data); } catch { return; }
       if (d[0] === 'OK' && d[1] === event.id) {
+        const ok = !!d[2], error = d[3] || null;
+        // NIP-42: relay wants us authenticated before it will accept the event.
+        if (!ok && /auth-required/i.test(error || '') && ws._challenge && !retriedAuth) {
+          retriedAuth = true;
+          authenticate(ws, url)
+            .then(() => { try { ws.send(JSON.stringify(['EVENT', event])); } catch {} })
+            .catch(() => { ws.removeEventListener('message', onMsg); resolve({ url, ok: false, error }); });
+          return;
+        }
         ws.removeEventListener('message', onMsg);
-        resolve({ url, ok: !!d[2], error: d[3] || null });
+        resolve({ url, ok, error });
       }
     };
     ws.addEventListener('message', onMsg);

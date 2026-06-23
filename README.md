@@ -62,7 +62,7 @@ python3 -m http.server 8000
 | `js/app.js`      | Orchestration, project state, the system prompt, and the model's tools.|
 | `js/auth.js`     | Detects the provider from a pasted key and verifies it live.          |
 | `js/llm.js`      | Claude, OpenAI **and** Gemini API client + the shared tool-use loop.   |
-| `js/nostr.js`    | Relay pool (query/subscribe/publish), NIP-07 signer, NIP-19 bech32.   |
+| `js/nostr.js`    | Relay pool (query/subscribe/publish), NIP-42 relay AUTH, NIP-07 signer, NIP-19 bech32. |
 | `js/views.js`    | Runtime that executes a generated view into the page with an `api`.   |
 | `js/storage.js`  | Persists the whole project to `localStorage`.                         |
 | `js/theme.js`    | Light/dark theme preference (persisted separately, survives reset).   |
