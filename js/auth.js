@@ -38,7 +38,7 @@ export const PROVIDERS = {
   // base URL rather than by the key's shape, so there is no default model or
   // console — both depend on the endpoint the user points at.
   'openai-compatible': {
-    label: 'OpenAI-API',
+    label: 'Your-API',
     defaultModel: '',
     keyHint: 'any key (some local servers need none)',
     consoleUrl: '',
