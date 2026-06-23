@@ -149,28 +149,40 @@ function nextSubId() { return 'amy' + (++subCounter); }
 
 /**
  * One-shot query across relays. Resolves with a de-duplicated array of events
- * once every relay sends EOSE or `timeout` ms elapses. Sorted newest-first by
- * default; pass opts.sort === false to keep arrival order instead — NIP-50
- * search relays return events in relevance order, which a time sort would lose.
+ * once every relay either sends EOSE or goes silent for `timeout` ms.
+ *
+ * `timeout` is an IDLE window, not a wall-clock deadline: it is armed when the
+ * REQ is sent and reset on every incoming event, so a relay actively streaming
+ * a large backlog keeps gathering until it actually stops (or sends EOSE) —
+ * only a genuine pause longer than `timeout` ends that relay. Each relay runs
+ * its own idle timer, so one chatty relay never holds the call open for slow
+ * ones, and one slow relay never delays results from fast ones.
+ *
+ * Sorted newest-first by default; pass opts.sort === false to keep arrival
+ * order instead — NIP-50 search relays return events in relevance order, which
+ * a time sort would lose.
  * @param {string[]} relays
  * @param {object|object[]} filters - NIP-01 filter(s)
  * @param {object} [opts] - { timeout=4000, sort }
  */
 export async function query(relays, filters, opts = {}) {
-  const timeout = opts.timeout ?? 4000;
+  const idle = opts.timeout ?? 4000; // silence window; reset on each event
   const filterArr = Array.isArray(filters) ? filters : [filters];
   const seen = new Map(); // id -> event
   const subId = nextSubId();
 
   const perRelay = relays.map((url) => new Promise((resolve) => {
-    let done = false;
-    const finish = () => { if (done) return; done = true; cleanup(); resolve(); };
+    let done = false, idleTimer = null;
+    const finish = () => { if (done) return; done = true; clearTimeout(idleTimer); cleanup(); resolve(); };
+    // (Re)start the idle countdown. Called when the REQ goes out and on every
+    // event, so the deadline only fires after a real pause in the stream.
+    const bump = () => { if (done) return; clearTimeout(idleTimer); idleTimer = setTimeout(finish, idle); };
     let ws, cleanup = () => {};
     try {
       ws = connect(url);
     } catch { return finish(); }
     ws._subs.set(subId, {
-      onEvent: (ev) => { if (ev && ev.id && !seen.has(ev.id)) seen.set(ev.id, ev); },
+      onEvent: (ev) => { if (ev && ev.id && !seen.has(ev.id)) seen.set(ev.id, ev); bump(); },
       onEose: finish,
       filters: filterArr, // kept so a NIP-42 auth-required REQ can be replayed
     });
@@ -178,15 +190,13 @@ export async function query(relays, filters, opts = {}) {
       ws._subs.delete(subId);
       try { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(['CLOSE', subId])); } catch {}
     };
+    bump(); // arm now so a relay that never opens still finishes (no hang)
     whenOpen(ws)
-      .then(() => ws.send(JSON.stringify(['REQ', subId, ...filterArr])))
+      .then(() => { ws.send(JSON.stringify(['REQ', subId, ...filterArr])); bump(); }) // reset once the REQ is actually out
       .catch(finish);
   }));
 
-  await Promise.race([
-    Promise.all(perRelay),
-    new Promise((r) => setTimeout(r, timeout)),
-  ]);
+  await Promise.all(perRelay);
 
   const events = [...seen.values()]; // Map preserves arrival order
   return opts.sort === false ? events : events.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
@@ -222,7 +232,8 @@ export function subscribe(relays, filters, onEvent, opts = {}) {
  * NIP-45 COUNT: ask relays how many events match the filter(s). Returns the
  * largest count any single relay reports — counts are per-relay and relays
  * overlap, so they are NOT additive; the max is the best single-number estimate.
- * Resolves once every relay answers or `timeout` ms elapses. Relays that don't
+ * Resolves once every relay answers or goes silent for `timeout` ms (an idle
+ * window armed when the COUNT is sent, same as query()). Relays that don't
  * implement NIP-45 simply never answer (they're covered by the timeout), and
  * the count itself may be approximate, so treat it as a ballpark, not a total.
  * @param {string[]} relays
@@ -231,14 +242,15 @@ export function subscribe(relays, filters, onEvent, opts = {}) {
  * @returns {Promise<number>}
  */
 export async function count(relays, filters, opts = {}) {
-  const timeout = opts.timeout ?? 4000;
+  const idle = opts.timeout ?? 4000;
   const filterArr = Array.isArray(filters) ? filters : [filters];
   const subId = nextSubId();
   let max = 0;
 
   const perRelay = relays.map((url) => new Promise((resolve) => {
-    let done = false;
-    const finish = () => { if (done) return; done = true; ws && ws._subs.delete(subId); resolve(); };
+    let done = false, idleTimer = null;
+    const finish = () => { if (done) return; done = true; clearTimeout(idleTimer); ws && ws._subs.delete(subId); resolve(); };
+    const bump = () => { if (done) return; clearTimeout(idleTimer); idleTimer = setTimeout(finish, idle); };
     let ws;
     try { ws = connect(url); } catch { return finish(); }
     ws._subs.set(subId, {
@@ -247,15 +259,13 @@ export async function count(relays, filters, opts = {}) {
       filters: filterArr, // kept so a NIP-42 auth-required COUNT can be replayed
       verb: 'COUNT',
     });
+    bump(); // arm now so a relay that never opens / never answers still finishes
     whenOpen(ws)
-      .then(() => ws.send(JSON.stringify(['COUNT', subId, ...filterArr])))
+      .then(() => { ws.send(JSON.stringify(['COUNT', subId, ...filterArr])); bump(); })
       .catch(finish);
   }));
 
-  await Promise.race([
-    Promise.all(perRelay),
-    new Promise((r) => setTimeout(r, timeout)),
-  ]);
+  await Promise.all(perRelay);
 
   return max;
 }
