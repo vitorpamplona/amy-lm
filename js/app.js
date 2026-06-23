@@ -228,6 +228,37 @@ async function dispatch(name, input) {
 }
 
 // ---------------------------------------------------------------------------
+// Confirm dialog — a designed replacement for window.confirm(). Resolves true
+// when the user confirms, false on cancel / Escape / backdrop dismiss.
+// ---------------------------------------------------------------------------
+function confirmDialog({ title = 'Are you sure?', message = '', confirmLabel = 'Confirm', danger = true } = {}) {
+  const dlg = $('#confirm-dialog');
+  const ok = $('#confirm-ok');
+  $('#confirm-title').textContent = title;
+  $('#confirm-message').textContent = message;
+  ok.textContent = confirmLabel;
+  ok.classList.toggle('danger', danger);
+  $('#confirm-icon').hidden = !danger;
+
+  return new Promise((resolve) => {
+    let confirmed = false;
+    const onOk = () => { confirmed = true; dlg.close(); };
+    const onCancel = () => dlg.close();
+    const onClose = () => {
+      ok.removeEventListener('click', onOk);
+      $('#confirm-cancel').removeEventListener('click', onCancel);
+      dlg.removeEventListener('close', onClose);
+      resolve(confirmed);
+    };
+    ok.addEventListener('click', onOk);
+    $('#confirm-cancel').addEventListener('click', onCancel);
+    dlg.addEventListener('close', onClose);
+    dlg.showModal();
+    ok.focus();
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Canvas (views)
 // ---------------------------------------------------------------------------
 function renderTabs() {
@@ -243,10 +274,14 @@ function renderTabs() {
     x.className = 'x';
     x.textContent = '×';
     x.title = 'Delete view';
-    x.onclick = (e) => {
+    x.onclick = async (e) => {
       e.stopPropagation();
-      if (!confirm(`Close the view "${v.title}"? This cannot be undone.`)) return;
-      dispatch('delete_view', { id: v.id });
+      const ok = await confirmDialog({
+        title: 'Close this view?',
+        message: `“${v.title}” will be deleted permanently. This cannot be undone.`,
+        confirmLabel: 'Delete view',
+      });
+      if (ok) dispatch('delete_view', { id: v.id });
     };
     tab.append(label, x);
     tabs.append(tab);
@@ -744,8 +779,13 @@ function init() {
     if (e.key === 'Enter') { e.preventDefault(); submitConnect(); }
   });
   $('#btn-clear-chat').addEventListener('click', clearChat);
-  $('#btn-reset').addEventListener('click', () => {
-    if (!confirm('Wipe this local project (views, chat, settings)? This cannot be undone.')) return;
+  $('#btn-reset').addEventListener('click', async () => {
+    const ok = await confirmDialog({
+      title: 'Reset this project?',
+      message: 'Your views, chat, and settings in this browser will be wiped. This cannot be undone.',
+      confirmLabel: 'Reset project',
+    });
+    if (!ok) return;
     store.reset();
     project = store.load();
     activeViewId = null;
