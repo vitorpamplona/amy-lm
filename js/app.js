@@ -13,7 +13,11 @@ import { verifyApiKey, detectProvider, PROVIDERS } from './auth.js';
 // ---------------------------------------------------------------------------
 let project = store.load();
 let activeViewId = project.views[0]?.id || null;
-const viewCleanups = []; // teardown fns for the currently-rendered view
+
+// One mounted, independently-scrollable pane per view, so each tab keeps its
+// own scroll position (and stays put when you switch away and back).
+// viewId -> { el, cleanups: fn[], code: string, rendered: bool }
+const panes = new Map();
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -188,42 +192,60 @@ function renderTabs() {
   }
 }
 
-function teardownView() {
-  while (viewCleanups.length) {
-    try { viewCleanups.pop()(); } catch {}
+function teardownPane(entry) {
+  while (entry.cleanups.length) {
+    try { entry.cleanups.pop()(); } catch {}
+  }
+}
+
+// Drop every mounted pane (used when something global changes, e.g. relays).
+function resetPanes() {
+  for (const entry of panes.values()) { teardownPane(entry); entry.el.remove(); }
+  panes.clear();
+}
+
+// Reconcile the mounted panes with the current set of views: create a pane for
+// each view, re-create panes whose code changed, and remove panes for deleted
+// views (tearing down their subscriptions).
+function syncPanes() {
+  const body = $('#canvas-body');
+  const live = new Set(project.views.map((v) => v.id));
+  for (const [id, entry] of panes) {
+    if (!live.has(id)) { teardownPane(entry); entry.el.remove(); panes.delete(id); }
+  }
+  for (const v of project.views) {
+    const entry = panes.get(v.id);
+    if (entry && entry.code !== v.code) { teardownPane(entry); entry.el.remove(); panes.delete(v.id); }
+    if (!panes.has(v.id)) {
+      const pane = document.createElement('div');
+      pane.className = 'view-pane';
+      pane.style.display = 'none';
+      body.append(pane);
+      panes.set(v.id, { el: pane, cleanups: [], code: v.code, rendered: false });
+    }
   }
 }
 
 function renderActiveView() {
-  teardownView();
-  const body = $('#canvas-body');
+  syncPanes();
   const view = project.views.find((v) => v.id === activeViewId);
-  if (!view) {
-    body.innerHTML = '';
-    body.append(buildEmptyState());
-    return;
-  }
-  body.innerHTML = '';
-  views.runView(body, view, {
-    relays: project.settings.relays,
-    getState: () => view.state || (view.state = {}),
-    setState: (obj) => { view.state = { ...(view.state || {}), ...obj }; persist(); },
-    onCleanup: (fn) => viewCleanups.push(fn),
-  });
-}
+  $('#empty-canvas').style.display = view ? 'none' : '';
 
-function buildEmptyState() {
-  const tpl = document.createElement('div');
-  tpl.className = 'empty';
-  tpl.innerHTML = `<h2>Your client is empty.</h2>
-    <p>Amy knows Nostr, how to read NIPs, and how to talk to your NIP-07 signer. Ask the chat on the right to build an interface — a feed, a profile card, a publish box — and it will appear here as a live view.</p>
-    <ul class="suggestions">
-      <li>“Build me a view that shows the latest 20 notes (kind 1) from my relays.”</li>
-      <li>“Make a profile card for an npub I paste in.”</li>
-      <li>“Give me a box to publish a short text note, signed by my extension.”</li>
-      <li>“Read NIP-51 and build a view of my bookmarked notes.”</li>
-    </ul>`;
-  return tpl;
+  for (const [id, entry] of panes) {
+    const active = !!view && id === activeViewId;
+    entry.el.style.display = active ? '' : 'none';
+    // Mount the active view the first time it's shown; afterwards it stays in
+    // the DOM (hidden) so its scroll position is preserved across tab switches.
+    if (active && !entry.rendered) {
+      entry.rendered = true;
+      views.runView(entry.el, view, {
+        relays: project.settings.relays,
+        getState: () => view.state || (view.state = {}),
+        setState: (obj) => { view.state = { ...(view.state || {}), ...obj }; persist(); },
+        onCleanup: (fn) => entry.cleanups.push(fn),
+      });
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -381,7 +403,8 @@ function saveSettingsFromForm() {
   project.name = $('#set-projname').value.trim() || 'untitled project';
   persist();
   $('#project-name').textContent = project.name;
-  renderActiveView(); // relays may have changed
+  resetPanes();        // relays may have changed — re-mount views with them
+  renderActiveView();
 }
 
 // ---------------------------------------------------------------------------
@@ -522,6 +545,7 @@ function init() {
     store.reset();
     project = store.load();
     activeViewId = null;
+    resetPanes();
     $('#project-name').textContent = project.name;
     renderTabs(); renderActiveView(); renderChatHistory();
   });
