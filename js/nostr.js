@@ -148,41 +148,33 @@ let subCounter = 0;
 function nextSubId() { return 'amy' + (++subCounter); }
 
 /**
- * One-shot query across relays. Resolves with a de-duplicated array of events
- * once every relay either sends EOSE or goes silent for `timeout` ms.
+ * Low-level one-round primitive: a SINGLE REQ to ONE relay with the given
+ * filter(s). Resolves with that relay's events once it sends EOSE or goes
+ * silent for `timeout` ms.
  *
- * `timeout` is an IDLE window, not a wall-clock deadline: it is armed when the
- * REQ is sent and reset on every incoming event, so a relay actively streaming
- * a large backlog keeps gathering until it actually stops (or sends EOSE) —
- * only a genuine pause longer than `timeout` ends that relay. Each relay runs
- * its own idle timer, so one chatty relay never holds the call open for slow
- * ones, and one slow relay never delays results from fast ones.
- *
- * Sorted newest-first by default; pass opts.sort === false to keep arrival
- * order instead — NIP-50 search relays return events in relevance order, which
- * a time sort would lose.
- * @param {string[]} relays
- * @param {object|object[]} filters - NIP-01 filter(s)
- * @param {object} [opts] - { timeout=4000, sort }
+ * `timeout` is an IDLE window, not a wall-clock deadline: it is armed before
+ * the socket opens (so a relay that never connects still resolves) and reset on
+ * every incoming event, so a relay actively streaming a large backlog keeps
+ * gathering until it actually stops (or sends EOSE) — only a genuine pause
+ * longer than `timeout` ends it. De-dup and sorting are the caller's job; this
+ * is the round that query() paginates over.
  */
-export async function query(relays, filters, opts = {}) {
-  const idle = opts.timeout ?? 4000; // silence window; reset on each event
-  const filterArr = Array.isArray(filters) ? filters : [filters];
-  const seen = new Map(); // id -> event
+function reqOnce(url, filterArr, opts = {}) {
+  const idle = opts.timeout ?? 4000;
   const subId = nextSubId();
-
-  const perRelay = relays.map((url) => new Promise((resolve) => {
+  const events = [];
+  return new Promise((resolve) => {
     let done = false, idleTimer = null;
-    const finish = () => { if (done) return; done = true; clearTimeout(idleTimer); cleanup(); resolve(); };
-    // (Re)start the idle countdown. Called when the REQ goes out and on every
-    // event, so the deadline only fires after a real pause in the stream.
+    const finish = () => { if (done) return; done = true; clearTimeout(idleTimer); cleanup(); resolve(events); };
+    // (Re)start the idle countdown — on REQ send and on every event — so the
+    // deadline only fires after a real pause in the stream.
     const bump = () => { if (done) return; clearTimeout(idleTimer); idleTimer = setTimeout(finish, idle); };
     let ws, cleanup = () => {};
     try {
       ws = connect(url);
     } catch { return finish(); }
     ws._subs.set(subId, {
-      onEvent: (ev) => { if (ev && ev.id && !seen.has(ev.id)) seen.set(ev.id, ev); bump(); },
+      onEvent: (ev) => { if (ev && ev.id) events.push(ev); bump(); },
       onEose: finish,
       filters: filterArr, // kept so a NIP-42 auth-required REQ can be replayed
     });
@@ -190,16 +182,102 @@ export async function query(relays, filters, opts = {}) {
       ws._subs.delete(subId);
       try { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(['CLOSE', subId])); } catch {}
     };
-    bump(); // arm now so a relay that never opens still finishes (no hang)
+    bump(); // arm now so a relay that never opens still resolves (no hang)
     whenOpen(ws)
       .then(() => { ws.send(JSON.stringify(['REQ', subId, ...filterArr])); bump(); }) // reset once the REQ is actually out
       .catch(finish);
-  }));
+  });
+}
 
-  await Promise.all(perRelay);
+/**
+ * Auto-paginate ONE filter against ONE relay, working around the relay's
+ * internal page cap (relays silently return only N events even when you ask for
+ * more, then EOSE). Apps just say `limit: 2000` or a `since`/`until` window and
+ * expect it filled; they won't drive the cursor themselves, so we do it.
+ *
+ * We walk a `until` cursor backwards in time: fetch a round, set the next
+ * `until` to the oldest event's created_at minus one second, fetch again, and
+ * accumulate de-duplicated events. Each round asks only for what's still needed
+ * (limit = remaining), so a relay capping at 500 fills a limit:2000 request in
+ * four rounds. We stop when:
+ *   - a round adds zero new events (the relay has nothing older to give), or
+ *   - we've collected the filter's `limit`, or
+ *   - the cursor drops below the filter's `since` (walked out the bottom of the
+ *     requested window), or
+ *   - a filter with neither limit nor since hits the `maxPages` safety cap
+ *     (otherwise it would walk the relay's entire history) — we warn, not loop.
+ *
+ * NIP-50 search filters are relevance-ranked, not time-ranked, so until-paging
+ * would scramble them; those (and opts.paginate === false) do a single round.
+ *
+ * The `-1` on the cursor guarantees forward progress, at the cost of possibly
+ * skipping events sharing the oldest event's exact second that fell outside the
+ * relay's page — an accepted trade to avoid looping on dense timestamps.
+ */
+async function paginate(url, filter, opts = {}) {
+  const singleRound = opts.paginate === false || !!filter.search;
+  const maxPages = opts.maxPages ?? 25;
+  const since = filter.since;
+  const target = typeof filter.limit === 'number' ? filter.limit : Infinity;
+  const unbounded = target === Infinity && since === undefined;
+  const collected = new Map(); // id -> event
+  let until = filter.until;
+  for (let round = 0; ; round++) {
+    const remaining = target === Infinity ? undefined : target - collected.size;
+    if (remaining !== undefined && remaining <= 0) break;
+    const f = { ...filter };
+    if (until === undefined) delete f.until; else f.until = until;
+    if (remaining !== undefined) f.limit = remaining;
+    const evs = await reqOnce(url, [f], opts);
+    let added = 0, oldest = Infinity;
+    for (const ev of evs) {
+      if (ev.id && !collected.has(ev.id)) { collected.set(ev.id, ev); added++; }
+      if (typeof ev.created_at === 'number' && ev.created_at < oldest) oldest = ev.created_at;
+    }
+    if (singleRound || added === 0 || oldest === Infinity) break;
+    until = oldest - 1;                               // walk strictly older
+    if (since !== undefined && until < since) break;  // past the window's start
+    if (unbounded && round + 1 >= maxPages) {         // safety net for "everything"
+      console.warn(`nostr.query: stopped paginating ${url} after ${maxPages} pages; set a limit/since or raise opts.maxPages`);
+      break;
+    }
+  }
+  return [...collected.values()];
+}
 
-  const events = [...seen.values()]; // Map preserves arrival order
-  return opts.sort === false ? events : events.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+/** Sort newest-first (unless sortDesc is false) and, for a single limited
+ *  non-search filter, cap the cross-relay union to that limit — so limit:2000
+ *  yields ~2000, not 2000×(number of relays). */
+function finalize(seen, filterArr, sortDesc) {
+  let events = [...seen.values()];
+  if (sortDesc) events = events.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  const only = filterArr.length === 1 ? filterArr[0] : null;
+  if (only && typeof only.limit === 'number' && !only.search) events = events.slice(0, only.limit);
+  return events;
+}
+
+/**
+ * One-shot query across relays, auto-paginated per relay (see paginate) so apps
+ * get the `limit` / time window they asked for even when relays cap a single
+ * REQ. Resolves with a de-duplicated array of events. Sorted newest-first by
+ * default; pass opts.sort === false to keep arrival order — NIP-50 search
+ * relays return relevance order, which a time sort would lose.
+ * @param {string[]} relays
+ * @param {object|object[]} filters - NIP-01 filter(s)
+ * @param {object} [opts] - { timeout=4000 (idle ms), maxPages=25, paginate=true, sort }
+ */
+export async function query(relays, filters, opts = {}) {
+  const filterArr = Array.isArray(filters) ? filters : [filters];
+  const seen = new Map(); // id -> event
+  // Paginate every (relay, filter) pair independently and in parallel; each
+  // relay walks its own cursor since its oldest event differs from the others'.
+  await Promise.all(relays.flatMap((url) =>
+    filterArr.map(async (filter) => {
+      const evs = await paginate(url, filter, opts);
+      for (const ev of evs) if (ev && ev.id && !seen.has(ev.id)) seen.set(ev.id, ev);
+    })
+  ));
+  return finalize(seen, filterArr, opts.sort !== false);
 }
 
 /**
@@ -415,7 +493,10 @@ async function routeByOutbox(seedRelays, filterArr, opts = {}) {
   return routed;
 }
 
-/** Outbox-routed one-shot query. Same return shape as query(). */
+/** Outbox-routed one-shot query. Same return shape as query() — each routed
+ *  relay is auto-paginated by the inner query(); the merged union is then capped
+ *  to the original filter's limit (routing splits authors across relays, so the
+ *  union can otherwise exceed it). */
 export async function outboxQuery(seedRelays, filters, opts = {}) {
   const filterArr = Array.isArray(filters) ? filters : [filters];
   const routed = await routeByOutbox(seedRelays, filterArr, opts);
@@ -424,7 +505,7 @@ export async function outboxQuery(seedRelays, filters, opts = {}) {
     const evs = await query([url], fs, opts);
     for (const ev of evs) if (ev && ev.id && !seen.has(ev.id)) seen.set(ev.id, ev);
   }));
-  return [...seen.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  return finalize(seen, filterArr, true);
 }
 
 /**
