@@ -60,6 +60,18 @@ function makeApi(ctx) {
     // NIP-45 COUNT -> Promise<number>. Approximate, per-relay (not additive);
     // not every relay supports it. Outbox-routed like query.
     count: (filters, opts) => nostr.outboxCount(seeds, filters, opts),
+    // NIP-50 full-text search -> Promise<event[]> (relevance order). NOT
+    // outbox-routed: sends a `search` filter to the user's search relays (kind
+    // 10007), falling back to seeds + well-known indexers. searchText is the
+    // query; pass an optional NIP-01 filter to constrain it (kinds, authors,
+    // limit, …). searchSubscribe is the live variant; RETURN its unsubscribe.
+    search: (searchText, filters, opts) => nostr.search(seeds, searchText, filters, { ...opts, pubkey: ctx.pubkey }),
+    searchSubscribe: (searchText, filters, onEvent, opts) => nostr.searchSubscribe(seeds, searchText, filters, onEvent, { ...opts, pubkey: ctx.pubkey }),
+    // Resolve which relays a search would hit -> string[] (the user's kind
+    // 10007 list, else seeds + indexers).
+    searchRelays: (opts) => nostr.searchRelaysFor(ctx.pubkey, seeds, opts),
+    // Escape hatch: search explicit relays, bypassing kind-10007 resolution.
+    searchAt: (relays, searchText, filters, opts) => nostr.search(seeds, searchText, filters, { ...opts, relays }),
     // Resolve a user's NIP-65 outbox relay list -> { read, write } (cached).
     relayListFor: (pubkey, opts) => nostr.relayListFor(pubkey, seeds, opts),
     // Resolve any other per-NIP relay list -> string[] (cached). e.g. kind
