@@ -15,6 +15,38 @@ export const signer = {
     if (!this.available()) throw new Error('No NIP-07 signer found.');
     return window.nostr.signEvent(event);
   },
+  // Optional NIP-07 relay hint: { [url]: { read, write } }. Returns {} if unsupported.
+  async getRelays() {
+    if (!this.available() || !window.nostr.getRelays) return {};
+    return window.nostr.getRelays();
+  },
+  // NIP-44 encryption (the modern scheme; required to seal/unseal NIP-59 gift
+  // wraps and NIP-17 DMs). Throws if the extension doesn't implement nip44.
+  nip44: {
+    async encrypt(pubkey, plaintext) {
+      if (!signer.available()) throw new Error('No NIP-07 signer found.');
+      if (!window.nostr.nip44) throw new Error('Signer does not support NIP-44 encryption.');
+      return window.nostr.nip44.encrypt(pubkey, plaintext);
+    },
+    async decrypt(pubkey, ciphertext) {
+      if (!signer.available()) throw new Error('No NIP-07 signer found.');
+      if (!window.nostr.nip44) throw new Error('Signer does not support NIP-44 decryption.');
+      return window.nostr.nip44.decrypt(pubkey, ciphertext);
+    },
+  },
+  // NIP-04 encryption (legacy/deprecated DM scheme). Kept for older events.
+  nip04: {
+    async encrypt(pubkey, plaintext) {
+      if (!signer.available()) throw new Error('No NIP-07 signer found.');
+      if (!window.nostr.nip04) throw new Error('Signer does not support NIP-04 encryption.');
+      return window.nostr.nip04.encrypt(pubkey, plaintext);
+    },
+    async decrypt(pubkey, ciphertext) {
+      if (!signer.available()) throw new Error('No NIP-07 signer found.');
+      if (!window.nostr.nip04) throw new Error('Signer does not support NIP-04 decryption.');
+      return window.nostr.nip04.decrypt(pubkey, ciphertext);
+    },
+  },
 };
 
 // ---------------------------------------------------------------------------
