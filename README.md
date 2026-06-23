@@ -70,7 +70,7 @@ python3 -m http.server 8000
 | `js/app.js`      | Orchestration, project state, the system prompt, and the model's tools.|
 | `js/auth.js`     | Detects the provider from a pasted key and verifies it live.          |
 | `js/llm.js`      | Claude, OpenAI **and** Gemini API client + the shared tool-use loop.   |
-| `js/nostr.js`    | Relay pool (query/subscribe/publish/count), NIP-42 relay AUTH, NIP-45 counts, NIP-07 signer, NIP-19 bech32. |
+| `js/nostr.js`    | Relay pool (query/subscribe/publish/count/search), NIP-42 relay AUTH, NIP-45 counts, NIP-50 search, NIP-07 signer, NIP-19 bech32. |
 | `js/views.js`    | Runtime that executes a generated view into the page with an `api`.   |
 | `js/storage.js`  | Persists the whole project to `localStorage`.                         |
 | `js/theme.js`    | Light/dark theme preference (persisted separately, survives reset).   |
@@ -79,6 +79,8 @@ python3 -m http.server 8000
 
 - `read_nip` — fetch any NIP's markdown from the `nostr-protocol/nips` repo.
 - `query_relays` — run a one-shot Nostr query to inspect real data.
+- `search_relays` — run a one-shot NIP-50 full-text search against the user's
+  search relays (kind 10007, falling back to public indexers).
 - `get_context` — read the connected pubkey and configured relays.
 - `save_view` / `list_views` / `delete_view` — create and manage the live
   interfaces shown on the canvas.
@@ -87,6 +89,7 @@ python3 -m http.server 8000
 
 Each view is JavaScript executed as `render(root, api)`. `root` is a fresh
 element to populate; `api` exposes `query`, `subscribe`, `publish`, `count`,
+`search` (NIP-50 full-text, routed to the user's kind 10007 search relays),
 `signer`, `nip19`, a tiny `el()` DOM helper, `timeAgo()`, and per-view `getState`/
 `setState`. A view may return an unsubscribe function for live feeds, which
 Amy calls when the view is closed.

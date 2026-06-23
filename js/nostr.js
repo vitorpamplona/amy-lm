@@ -148,11 +148,13 @@ let subCounter = 0;
 function nextSubId() { return 'amy' + (++subCounter); }
 
 /**
- * One-shot query across relays. Resolves with a de-duplicated, newest-first
- * array of events once every relay sends EOSE or `timeout` ms elapses.
+ * One-shot query across relays. Resolves with a de-duplicated array of events
+ * once every relay sends EOSE or `timeout` ms elapses. Sorted newest-first by
+ * default; pass opts.sort === false to keep arrival order instead — NIP-50
+ * search relays return events in relevance order, which a time sort would lose.
  * @param {string[]} relays
  * @param {object|object[]} filters - NIP-01 filter(s)
- * @param {object} [opts] - { timeout=4000 }
+ * @param {object} [opts] - { timeout=4000, sort }
  */
 export async function query(relays, filters, opts = {}) {
   const timeout = opts.timeout ?? 4000;
@@ -186,7 +188,8 @@ export async function query(relays, filters, opts = {}) {
     new Promise((r) => setTimeout(r, timeout)),
   ]);
 
-  return [...seen.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  const events = [...seen.values()]; // Map preserves arrival order
+  return opts.sort === false ? events : events.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
 }
 
 /**
@@ -451,6 +454,78 @@ export async function outboxPublish(seedRelays, draft, opts = {}) {
   const list = await relayListFor(pubkey, seedRelays, opts);
   const targets = list.write.length ? list.write : seedRelays;
   return publish(targets, draft);
+}
+
+// ---------------------------------------------------------------------------
+// NIP-50 (search) — send `search` filters to dedicated full-text relays
+//
+// Search is NOT an outbox concern: you usually search without knowing the
+// author, and the `search` filter field is only honored by relays that index
+// full text (most general relays ignore it). So search routes to dedicated
+// search relays, resolved per-user from their NIP-51 search-relay list
+// (kind 10007), and falls back to seeds + these well-known public indexers.
+// ---------------------------------------------------------------------------
+export const DEFAULT_SEARCH_RELAYS = [
+  'wss://relay.nostr.band',
+  'wss://search.nos.today',
+  'wss://relay.noswhere.com',
+];
+
+/**
+ * Decide which relays a NIP-50 search should go to. Preference order:
+ * 1. the user's own kind 10007 search-relay list (if a pubkey is given),
+ * 2. otherwise the seed/discovery relays plus the well-known indexers.
+ * De-duplicated; always resolves to a non-empty list.
+ * @param {string|null} pubkey - whose search-relay list to use (or null)
+ * @param {string[]} seedRelays
+ * @returns {Promise<string[]>}
+ */
+export async function searchRelaysFor(pubkey, seedRelays, opts = {}) {
+  let urls = [];
+  if (pubkey) { try { urls = await relaysFromList(pubkey, 10007, seedRelays, opts); } catch { /* fall through */ } }
+  if (!urls.length) urls = [...(seedRelays || []), ...DEFAULT_SEARCH_RELAYS];
+  return [...new Set(urls)];
+}
+
+/**
+ * One-shot NIP-50 search. Merges `searchText` into the `search` field of each
+ * filter and sends them to search relays (NOT outbox-routed). Results keep the
+ * relays' relevance order rather than being re-sorted by time.
+ * @param {string[]} seedRelays - discovery/fallback relays
+ * @param {string} searchText - the human query (NIP-50 `search` field)
+ * @param {object|object[]} [filters] - optional NIP-01 filter(s) to constrain it
+ * @param {object} [opts] - { pubkey, relays, timeout, sort }. opts.relays forces
+ *   explicit search relays (bypassing resolution); opts.pubkey picks whose
+ *   kind 10007 list to use. sort defaults to false to preserve relevance order.
+ * @returns {Promise<event[]>}
+ */
+export async function search(seedRelays, searchText, filters = {}, opts = {}) {
+  const relays = (opts.relays && opts.relays.length)
+    ? opts.relays
+    : await searchRelaysFor(opts.pubkey || null, seedRelays, opts);
+  const filterArr = (Array.isArray(filters) ? filters : [filters])
+    .map((f) => ({ ...f, search: searchText }));
+  return query(relays, filterArr, { sort: false, ...opts });
+}
+
+/**
+ * Live NIP-50 search subscription. Same routing as search(); calls onEvent for
+ * each match (incl. ones arriving after EOSE). Returns an unsubscribe function.
+ * Resolution is async, so events start flowing once the relays are picked.
+ */
+export function searchSubscribe(seedRelays, searchText, filters = {}, onEvent, opts = {}) {
+  const filterArr = (Array.isArray(filters) ? filters : [filters])
+    .map((f) => ({ ...f, search: searchText }));
+  let closer = () => {};
+  let stopped = false;
+  const ready = (opts.relays && opts.relays.length)
+    ? Promise.resolve(opts.relays)
+    : searchRelaysFor(opts.pubkey || null, seedRelays, opts);
+  ready.then((relays) => {
+    if (stopped) return;
+    closer = subscribe(relays, filterArr, onEvent, opts);
+  }).catch(() => {});
+  return () => { stopped = true; closer(); };
 }
 
 // ---------------------------------------------------------------------------

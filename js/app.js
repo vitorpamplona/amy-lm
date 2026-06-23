@@ -70,12 +70,19 @@ Nostr has no central server — each user reads and writes on THEIR OWN relays. 
 
 3. The fixed seed/discovery list (api.relays) — a LAST RESORT only. It exists to bootstrap the outbox lookups above and to serve users who have NO relay list anywhere. Do NOT treat it as "the relays for everything" and do not query it directly when an outbox list or a relay hint is available. Only reach for api.queryAt/subscribeAt/publishAt against explicit relays when a view genuinely needs a specific fixed relay (e.g. a single-relay browser).
 
+### Search is the exception: NIP-50, not outbox
+Full-text search does NOT follow the outbox model. You usually search without knowing the author, and the \`search\` filter field is only honored by relays that index full text — most general relays silently ignore it. So search goes to dedicated SEARCH relays, resolved from the user's NIP-51 search-relay list (kind 10007), falling back to the seeds and well-known public indexers. Use api.search(searchText, filters?) for this — it does that routing for you. Do NOT put a \`search\` field into api.query/api.subscribe filters (they route by author to relays that won't run the search); call api.search instead. Read NIP-50 if you need the query-string extensions (e.g. "domain:", "include:spam", "language:").
+
 Some relays require the user to be logged in (NIP-42 auth) before they return anything; the api authenticates automatically when a signer is connected, so if a query that should return data comes back empty, check api.signer.available() and prompt the user to connect their signer rather than showing a blank result.
 
 api surface:
 - api.query(filters, opts?) -> Promise<event[]> (one-shot; newest-first, de-duplicated; outbox-routed by author). filters is a NIP-01 filter or array of them. opts.timeout ms.
 - api.subscribe(filters, onEvent, opts?) -> returns an unsubscribe() function (live, incl. new events; outbox-routed). If you call subscribe, RETURN the unsubscribe function from your code so it is cleaned up when the view closes.
 - api.publish({ kind, content, tags? }, opts?) -> Promise<{event, results}> (signs via the user's NIP-07 extension; sends to the user's own write relays).
+- api.search(searchText, filters?, opts?) -> Promise<event[]> (NIP-50 full-text search, in relevance order). NOT outbox-routed: sends a \`search\` filter to the user's kind 10007 search relays, falling back to seeds + indexers. filters is an optional NIP-01 filter (kinds/authors/limit/…) to constrain it; the search string is merged in for you. Use this for any "search for…" / "find notes about…" feature.
+- api.searchSubscribe(searchText, filters?, onEvent, opts?) -> unsubscribe() (live NIP-50 search). RETURN the unsubscribe function if you use it.
+- api.searchRelays(opts?) -> Promise<string[]> the relays a search would hit (the user's kind 10007 list, else seeds + indexers).
+- api.searchAt(relays, searchText, filters?, opts?) -> Promise<event[]> search explicit relays, bypassing kind-10007 resolution.
 - api.count(filters, opts?) -> Promise<number> (NIP-45 COUNT; outbox-routed). Gets a count WITHOUT downloading the events — use it for follower/reaction/note totals instead of fetching everything and reading .length. It is APPROXIMATE and per-relay (counts are not additive, so it returns the largest a single relay reports), and not every relay implements NIP-45 (unsupported relays just don't answer), so show it as a ballpark and fall back gracefully if it returns 0.
 - api.relayListFor(pubkey, opts?) -> Promise<{ read: string[], write: string[] }> a user's NIP-65 outbox relay list (cached). Useful for inbox features (reach a user on their read relays) or showing where someone publishes.
 - api.relaysFromList(pubkey, kind, opts?) -> Promise<string[]> resolve any OTHER per-NIP relay list by its replaceable kind (cached). e.g. kind 10050 = NIP-17 DM relays, 10007 = search relays, 10063 = media servers.
@@ -156,6 +163,19 @@ const TOOLS = [
     },
   },
   {
+    name: 'search_relays',
+    description: 'Run a one-shot NIP-50 full-text search and return matching events (capped, in relevance order). Sends a `search` filter to dedicated search relays — the user\'s kind 10007 search-relay list, falling back to the seeds and well-known public indexers — NOT outbox-routed. Use to inspect real search results before building a search view. Note: only relays that index full text honor `search`; ordinary relays ignore it.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The full-text search string (NIP-50 `search` field). May include extensions like "domain:example.com" or "include:spam".' },
+        filters: { type: 'object', description: 'Optional NIP-01 filter to constrain the search, e.g. {"kinds":[1],"limit":20}. The search string is merged in for you.' },
+        timeout: { type: 'number', description: 'Max ms to wait (default 4000).' },
+      },
+      required: ['query'],
+    },
+  },
+  {
     name: 'get_context',
     description: 'Get the current signer public key (if connected) and the configured seed/discovery relays (the outbox-model fallback, not a per-user list).',
     input_schema: { type: 'object', properties: {} },
@@ -209,6 +229,20 @@ async function dispatch(name, input) {
       let filters = input.filters;
       if (typeof filters === 'string') { try { filters = JSON.parse(filters); } catch {} }
       const events = await nostr.outboxQuery(project.settings.relays, filters, { timeout: input.timeout ?? 4000 });
+      const trimmed = events.slice(0, 20).map((e) => ({
+        id: e.id, pubkey: e.pubkey, kind: e.kind, created_at: e.created_at,
+        tags: e.tags, content: (e.content || '').slice(0, 500),
+      }));
+      return JSON.stringify({ count: events.length, events: trimmed });
+    }
+    case 'search_relays': {
+      // Gemini may hand the filter over as a JSON string (see sanitizeSchema); tolerate both.
+      let filters = input.filters || {};
+      if (typeof filters === 'string') { try { filters = JSON.parse(filters); } catch {} }
+      const events = await nostr.search(project.settings.relays, input.query, filters, {
+        timeout: input.timeout ?? 4000,
+        pubkey: project.settings.pubkey || null,
+      });
       const trimmed = events.slice(0, 20).map((e) => ({
         id: e.id, pubkey: e.pubkey, kind: e.kind, created_at: e.created_at,
         tags: e.tags, content: (e.content || '').slice(0, 500),
@@ -336,6 +370,7 @@ function renderActiveView() {
       entry.rendered = true;
       views.runView(entry.el, view, {
         relays: project.settings.relays,
+        pubkey: project.settings.pubkey || null, // whose kind 10007 search relays to use
         getState: () => view.state || (view.state = {}),
         setState: (obj) => { view.state = { ...(view.state || {}), ...obj }; persist(); },
         onCleanup: (fn) => entry.cleanups.push(fn),
