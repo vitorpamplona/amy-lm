@@ -3,7 +3,22 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark light" />
   <title>Amy — a Nostr client that builds itself</title>
+  <!-- Apply the saved (or system) theme before paint to avoid a flash. -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('amy.theme');
+        if (t !== 'light' && t !== 'dark') {
+          t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        }
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="./css/style.css" />
 </head>
 <body>
@@ -18,6 +33,7 @@
     <div class="top-actions">
       <span id="signer-status" class="pill" title="NIP-07 signer status">no signer</span>
       <button id="btn-connect-signer" class="ghost">Connect signer</button>
+      <button id="btn-theme" class="ghost icon" title="Toggle light / dark theme" aria-label="Toggle theme"></button>
       <button id="btn-settings" class="ghost">Settings</button>
       <button id="btn-reset" class="ghost danger" title="Wipe the local project">Reset</button>
     </div>

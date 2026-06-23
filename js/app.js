@@ -4,6 +4,7 @@
 import * as store from './storage.js';
 import * as nostr from './nostr.js';
 import * as views from './views.js';
+import * as theme from './theme.js';
 import { converse } from './claude.js';
 
 // ---------------------------------------------------------------------------
@@ -45,7 +46,7 @@ api surface:
 Guidance:
 - Write self-contained, defensive code. Show a loading state, then render. Catch errors and show them in 'root'.
 - Profile (kind 0) content is JSON: parse for { name, display_name, picture, about }.
-- Keep styling light; the host app provides a dark theme. Inline styles are fine.
+- The host app provides matching light and dark themes. Inline styles are fine, but prefer the host CSS variables so your view adapts to both: var(--text), var(--muted), var(--panel-2) / var(--panel-3) for surfaces, var(--border) for lines, var(--accent) and var(--accent-2) for emphasis, var(--radius) for corners. Avoid hard-coded black/white backgrounds.
 - Prefer api.query for fetch-once lists; use api.subscribe only for live feeds.
 - When the user references an account by npub, convert with api.nip19.toHexPubkey before using it in filters (authors are hex).
 
@@ -303,6 +304,18 @@ async function onSend(e) {
 function setStatus(t) { $('#chat-status').textContent = t; }
 
 // ---------------------------------------------------------------------------
+// Theme
+// ---------------------------------------------------------------------------
+function refreshThemeButton() {
+  const btn = $('#btn-theme');
+  if (!btn) return;
+  const dark = theme.current() === 'dark';
+  // Show the icon for the mode you'd switch *to*.
+  btn.textContent = dark ? '☀' : '☾';
+  btn.title = dark ? 'Switch to light theme' : 'Switch to dark theme';
+}
+
+// ---------------------------------------------------------------------------
 // Signer + settings
 // ---------------------------------------------------------------------------
 async function refreshSignerStatus() {
@@ -356,6 +369,8 @@ function init() {
   $('#prompt').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSend(e); }
   });
+  refreshThemeButton();
+  $('#btn-theme').addEventListener('click', () => { theme.toggle(); refreshThemeButton(); });
   $('#btn-connect-signer').addEventListener('click', connectSigner);
   $('#btn-settings').addEventListener('click', openSettings);
   $('#settings-dialog').addEventListener('close', () => {
