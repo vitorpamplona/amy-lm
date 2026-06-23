@@ -18,6 +18,11 @@ back up when you return.
 There is **no server**. Everything runs client-side; Nostr relays and the
 Anthropic API are the only things it talks to.
 
+The UI ships with **light and dark themes** — use the ☀/☾ button in the top
+bar to switch. Your choice is remembered (and defaults to your system
+preference). Themes are driven by CSS variables on `:root`, which the views
+Amy builds inherit, so generated interfaces restyle to match automatically.
+
 ## Run it
 
 It's plain static files — no build step. Serve the folder over HTTP (ES
@@ -54,6 +59,7 @@ python3 -m http.server 8000
 | `js/nostr.js`    | Relay pool (query/subscribe/publish), NIP-07 signer, NIP-19 bech32.   |
 | `js/views.js`    | Runtime that executes a generated view into the page with an `api`.   |
 | `js/storage.js`  | Persists the whole project to `localStorage`.                         |
+| `js/theme.js`    | Light/dark theme preference (persisted separately, survives reset).   |
 
 ### The tools Claude has
 
