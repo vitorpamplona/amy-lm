@@ -47,11 +47,14 @@ python3 -m http.server 8000
    live in **Settings**.)
 2. (Optional) Click **Connect signer** to authorize your NIP-07 extension so
    views can read your pubkey and publish on your behalf. If a Nostr extension
-   is detected, Amy prompts you to do this right after you log in. Connecting
-   also **imports your own relays** (NIP-65) so the outbox model routes through
-   the network you actually use — no manual relay setup — and **remembers you**:
-   on your next visit your profile loads automatically, no reconnect needed.
-   (Use the menu's **Disconnect signer** to forget it.)
+   is detected, Amy prompts you to do this right after you log in. **No
+   extension yet?** The same dialog walks you through installing one — it
+   suggests [Alby](https://getalby.com/products/browser-extension) (or nos2x),
+   where you create a fresh Nostr key (or import an existing `nsec`), then hit
+   **Retry**. Connecting **imports your own relays** (NIP-65) so the outbox
+   model routes through the network you actually use — no manual relay setup —
+   and **remembers you**: on your next visit your profile loads automatically,
+   no reconnect needed. (Use the menu's **Disconnect signer** to forget it.)
 3. Ask the chat to build something.
 
 > **Why paste a key instead of "Sign in"?** Amy has no server to hold a

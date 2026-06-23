@@ -402,22 +402,64 @@ function refreshSignerStatus() {
   item.textContent = project.settings.pubkey ? 'Disconnect signer' : 'Connect signer';
 }
 
-async function connectSigner() {
-  // Already connected -> the menu item acts as a disconnect.
+// Menu entry: when connected it disconnects; otherwise it opens the guided
+// dialog, which both authorizes an existing extension AND walks users who
+// don't have a signer yet through installing one.
+function onSignerMenu() {
   if (project.settings.pubkey) { disconnectSigner(); return; }
-  if (!nostr.signer.available()) { setStatus('No NIP-07 extension found. Install e.g. Alby or nos2x.'); return; }
+  openSignerDialog();
+}
+
+function setSignerStatus(text, kind = '') {
+  const el = $('#signer-status');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'connect-status' + (kind ? ' ' + kind : '');
+}
+
+// Adapt the dialog to whether a NIP-07 extension is present right now: existing
+// users get a one-click Connect; users without one get install guidance + Retry.
+function refreshSignerDialog() {
+  const present = nostr.signer.available();
+  $('#signer-present').hidden = !present;
+  $('#signer-absent').hidden = present;
+  $('#signer-action').textContent = present ? 'Connect' : 'Retry';
+  setSignerStatus('');
+}
+
+function openSignerDialog() {
+  refreshSignerDialog();
+  $('#signer-dialog').showModal();
+}
+
+async function signerAction() {
+  // No extension yet: this is the "Retry" path — re-check after they install one.
+  if (!nostr.signer.available()) {
+    refreshSignerDialog();
+    if (!nostr.signer.available()) {
+      setSignerStatus('Still no signer detected. Make sure the extension is installed and enabled, then retry. You may need to reload the page.', 'error');
+    }
+    return;
+  }
+  const action = $('#signer-action');
+  action.disabled = true;
+  setSignerStatus('Waiting for the extension to authorize…');
   try {
     const pk = await nostr.signer.getPublicKey();
     project.settings.pubkey = pk;
     persist();
     refreshSignerStatus();
+    setSignerStatus('Connected! Importing your relays and profile…', 'ok');
     // Pull the user's own relays so the outbox model routes through their real
     // network with no manual relay setup, then show their profile.
     await importUserRelays(pk);
     await loadUserProfile(pk);
     setStatus('');
+    setTimeout(() => $('#signer-dialog').close(), 700);
   } catch (err) {
-    setStatus('Signer connection denied.');
+    setSignerStatus('Authorization was denied. Approve the request in your extension and retry.', 'error');
+  } finally {
+    action.disabled = false;
   }
 }
 
@@ -433,12 +475,16 @@ function restoreSigner() {
   loadUserProfile(pk);
 }
 
-// Existing nostr users have a NIP-07 extension — if one is present but not yet
-// connected, invite them to link it (one click in the menu) so views can read
-// their pubkey and publish on their behalf.
+// After login, point the user toward connecting a Nostr identity. If an
+// extension is already present we invite a one-click connect; if not (e.g. a
+// user new to Nostr) we point them at the guided setup that suggests Alby.
 function nudgeConnectSigner() {
-  if (project.settings.pubkey || !nostr.signer.available()) return;
-  setStatus('Nostr extension detected — open the menu (top right) and “Connect signer” to use your identity.');
+  if (project.settings.pubkey) return;
+  if (nostr.signer.available()) {
+    setStatus('Nostr extension detected — open the menu (top right) and “Connect signer” to use your identity.');
+  } else {
+    setStatus('New to Nostr? Open the menu (top right) → “Connect signer” to set up a signer extension (we suggest Alby).');
+  }
 }
 
 function disconnectSigner() {
@@ -639,7 +685,7 @@ function init() {
   });
   refreshThemeButton();
   $('#btn-theme').addEventListener('click', () => { theme.toggle(); refreshThemeButton(); });
-  $('#btn-connect-signer').addEventListener('click', connectSigner);
+  $('#btn-connect-signer').addEventListener('click', onSignerMenu);
 
   // User menu dropdown (holds the nav actions, opened from the avatar).
   const userBtn = $('#user-menu-btn');
@@ -662,6 +708,10 @@ function init() {
   $('#connect-submit').addEventListener('click', submitConnect);
   $('#connect-cancel').addEventListener('click', () => $('#connect-dialog').close());
   $('#connect-disconnect').addEventListener('click', disconnectClaude);
+
+  // Connect signer (guided)
+  $('#signer-action').addEventListener('click', signerAction);
+  $('#signer-cancel').addEventListener('click', () => $('#signer-dialog').close());
   $('#connect-apikey').addEventListener('input', reflectDetectedProvider);
   $('#connect-apikey').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); submitConnect(); }

@@ -176,6 +176,54 @@
     </form>
   </dialog>
 
+  <!-- Connect signer (guided; helps users who have no extension yet) -->
+  <dialog id="signer-dialog">
+    <form method="dialog" id="signer-form">
+      <h3>Connect your Nostr signer</h3>
+      <p class="muted">
+        Amy uses a <strong>NIP-07 signer</strong> — a small browser extension that holds
+        your Nostr keys — to know who you are and to sign the notes you publish. Your
+        secret key never leaves the extension: Amy only sees your public key and asks the
+        extension to sign, which it confirms with you each time.
+      </p>
+
+      <!-- Shown when an extension IS available -->
+      <div id="signer-present" hidden>
+        <p class="muted">
+          A Nostr extension was detected in this browser. Click <strong>Connect</strong>
+          and approve the request to log in with your existing identity.
+        </p>
+      </div>
+
+      <!-- Shown when NO extension is available -->
+      <div id="signer-absent" hidden>
+        <ol class="steps">
+          <li>
+            <span>Install a signer extension. We suggest <strong>Alby</strong>:</span>
+            <span class="console-links">
+              <a id="signer-install-alby" class="btn-link" href="https://getalby.com/products/browser-extension" target="_blank" rel="noopener">Get Alby ↗</a>
+              <a id="signer-install-nos2x" class="btn-link" href="https://github.com/fiatjaf/nos2x" target="_blank" rel="noopener">nos2x (alternative) ↗</a>
+            </span>
+          </li>
+          <li>
+            <span>In the extension, create a fresh Nostr key or import an existing one (your <code>nsec</code>).</span>
+          </li>
+          <li>
+            <span>Come back here and click <strong>Retry</strong> — Amy will pick it up.</span>
+          </li>
+        </ol>
+      </div>
+
+      <div id="signer-status" class="connect-status" role="status"></div>
+
+      <menu>
+        <span class="spacer"></span>
+        <button type="button" id="signer-cancel" class="ghost">Cancel</button>
+        <button type="button" id="signer-action">Connect</button>
+      </menu>
+    </form>
+  </dialog>
+
   <script type="module" src="./js/app.js"></script>
 </body>
 </html>
