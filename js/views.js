@@ -45,13 +45,25 @@ function timeAgo(unixSeconds) {
  * @param {object} ctx - { relays, getState, setState }
  */
 function makeApi(ctx) {
+  const seeds = ctx.relays; // discovery/fallback relays from settings
   return {
-    relays: ctx.relays,
+    relays: seeds,
     signer: nostr.signer,
     nip19: nostr.nip19,
-    query: (filters, opts) => nostr.query(ctx.relays, filters, opts),
-    subscribe: (filters, onEvent, opts) => nostr.subscribe(ctx.relays, filters, onEvent, opts),
-    publish: (draft) => nostr.publish(ctx.relays, draft),
+    // Outbox model (NIP-65) is the DEFAULT: reads are routed to each author's
+    // own write relays, writes go to the user's own write relays. `seeds` are
+    // only used to discover relay lists and as a fallback for users who have
+    // none. Don't pass relay lists around — just give filters with `authors`.
+    query: (filters, opts) => nostr.outboxQuery(seeds, filters, opts),
+    subscribe: (filters, onEvent, opts) => nostr.outboxSubscribe(seeds, filters, onEvent, opts),
+    publish: (draft, opts) => nostr.outboxPublish(seeds, draft, opts),
+    // Resolve a user's NIP-65 relay list -> { read, write } (cached).
+    relayListFor: (pubkey, opts) => nostr.relayListFor(pubkey, seeds, opts),
+    // Escape hatch: talk to explicit relays, bypassing outbox routing. Use only
+    // when a view genuinely needs a fixed relay (e.g. a single-relay browser).
+    queryAt: (relays, filters, opts) => nostr.query(relays, filters, opts),
+    subscribeAt: (relays, filters, onEvent, opts) => nostr.subscribe(relays, filters, onEvent, opts),
+    publishAt: (relays, draft) => nostr.publish(relays, draft),
     // tiny dom + format helpers
     el,
     timeAgo,

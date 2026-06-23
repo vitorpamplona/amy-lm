@@ -159,6 +159,114 @@ export async function publish(relays, draft) {
 }
 
 // ---------------------------------------------------------------------------
+// Outbox model (NIP-65) — route reads/writes to each user's own relays
+//
+// The "seed" relays passed in act as discovery/indexer relays: we ask them for
+// a user's kind 10002 relay list, then talk to the relays that user actually
+// uses. Seeds are only the fallback for users who have no relay list anywhere.
+// ---------------------------------------------------------------------------
+const relayListCache = new Map(); // pubkey -> { read: string[], write: string[] }
+
+/** Parse a NIP-65 (kind 10002) event into { read, write } relay URL lists. */
+export function parseRelayList(ev) {
+  const read = [], write = [];
+  for (const t of (ev && ev.tags) || []) {
+    if (t[0] !== 'r' || !t[1]) continue;
+    const marker = t[2];
+    if (marker === 'read') read.push(t[1]);
+    else if (marker === 'write') write.push(t[1]);
+    else { read.push(t[1]); write.push(t[1]); } // unmarked = both
+  }
+  return { read, write };
+}
+
+/**
+ * Resolve a user's NIP-65 relay list (cached). Bootstraps the lookup from the
+ * seed relays. Always resolves — returns empty lists if none is found.
+ * @returns {Promise<{read: string[], write: string[]}>}
+ */
+export async function relayListFor(pubkey, seedRelays, opts = {}) {
+  if (!opts.force && relayListCache.has(pubkey)) return relayListCache.get(pubkey);
+  let list = { read: [], write: [] };
+  try {
+    const evs = await query(seedRelays, { kinds: [10002], authors: [pubkey], limit: 1 }, { timeout: opts.timeout ?? 4000 });
+    if (evs[0]) list = parseRelayList(evs[0]);
+  } catch { /* fall through to empty */ }
+  relayListCache.set(pubkey, list);
+  return list;
+}
+
+// Build a Map<relayUrl, filters[]> by routing each author to their write
+// relays (where they publish). Author-less filters and authors with no relay
+// list fall back to the seeds.
+async function routeByOutbox(seedRelays, filterArr, opts = {}) {
+  const maxPerAuthor = opts.maxRelaysPerAuthor ?? 3;
+  const routed = new Map();
+  const add = (url, filter) => {
+    if (!routed.has(url)) routed.set(url, []);
+    routed.get(url).push(filter);
+  };
+  for (const filter of filterArr) {
+    const authors = filter.authors;
+    if (!authors || !authors.length) {
+      for (const url of seedRelays) add(url, filter); // can't route without authors
+      continue;
+    }
+    const lists = await Promise.all(authors.map((pk) => relayListFor(pk, seedRelays, opts)));
+    const byRelay = new Map(); // url -> Set(pubkey)
+    authors.forEach((pk, i) => {
+      let write = lists[i].write;
+      if (write.length > maxPerAuthor) write = write.slice(0, maxPerAuthor);
+      if (!write.length) write = seedRelays; // no outbox anywhere -> fallback
+      for (const url of write) {
+        if (!byRelay.has(url)) byRelay.set(url, new Set());
+        byRelay.get(url).add(pk);
+      }
+    });
+    for (const [url, set] of byRelay) add(url, { ...filter, authors: [...set] });
+  }
+  return routed;
+}
+
+/** Outbox-routed one-shot query. Same return shape as query(). */
+export async function outboxQuery(seedRelays, filters, opts = {}) {
+  const filterArr = Array.isArray(filters) ? filters : [filters];
+  const routed = await routeByOutbox(seedRelays, filterArr, opts);
+  const seen = new Map();
+  await Promise.all([...routed].map(async ([url, fs]) => {
+    const evs = await query([url], fs, opts);
+    for (const ev of evs) if (ev && ev.id && !seen.has(ev.id)) seen.set(ev.id, ev);
+  }));
+  return [...seen.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+}
+
+/** Outbox-routed live subscription. Returns an unsubscribe function. */
+export function outboxSubscribe(seedRelays, filters, onEvent, opts = {}) {
+  const filterArr = Array.isArray(filters) ? filters : [filters];
+  const seen = new Set();
+  const wrapped = (ev, url) => { if (ev && ev.id && !seen.has(ev.id)) { seen.add(ev.id); onEvent(ev, url); } };
+  let closers = [];
+  let stopped = false;
+  routeByOutbox(seedRelays, filterArr, opts).then((routed) => {
+    if (stopped) return;
+    for (const [url, fs] of routed) closers.push(subscribe([url], fs, wrapped, opts));
+  }).catch(() => {});
+  return () => { stopped = true; closers.forEach((c) => c()); };
+}
+
+/**
+ * Outbox-aware publish: sign and send to the author's own write relays so the
+ * wider network can find the event. Falls back to seeds if the author has no
+ * relay list yet.
+ */
+export async function outboxPublish(seedRelays, draft, opts = {}) {
+  const pubkey = await signer.getPublicKey();
+  const list = await relayListFor(pubkey, seedRelays, opts);
+  const targets = list.write.length ? list.write : seedRelays;
+  return publish(targets, draft);
+}
+
+// ---------------------------------------------------------------------------
 // NIP-19 (bech32) — npub / nsec / note encode & decode
 // ---------------------------------------------------------------------------
 const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';

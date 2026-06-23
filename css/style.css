@@ -473,7 +473,9 @@ dialog[open] { animation: pop .18s ease; }
 @media (max-width: 820px) {
   #layout { grid-template-columns: 1fr; grid-template-rows: 1fr 45vh; }
   #chat { border-top: 1px solid var(--border); }
-  .top-actions button:not(.icon) { padding-inline: 10px; }
+  /* Extra tap padding for text buttons only — not the fixed-size avatar
+     circle, whose padding must stay 0 so its icon stays centered. */
+  .top-actions button:not(.icon):not(.avatar-btn) { padding-inline: 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

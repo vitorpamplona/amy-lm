@@ -101,8 +101,9 @@
         <input type="text" id="set-model" placeholder="claude-opus-4-8 / gemini-2.5-pro" />
       </label>
 
-      <label>Relays (one wss:// URL per line)
+      <label>Discovery relays (one wss:// URL per line)
         <textarea id="set-relays" rows="5" placeholder="wss://relay.damus.io"></textarea>
+        <small>Seed relays used to discover each user's own relays (NIP-65 outbox model) and as a fallback. Per-user reads and writes are routed automatically.</small>
       </label>
 
       <label>Project name

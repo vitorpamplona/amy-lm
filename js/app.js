@@ -37,11 +37,16 @@ To create or update an interface, call save_view with a 'code' string. The code 
 - 'root' is a fresh <div> you populate with DOM.
 - 'api' provides everything you need. DO NOT import anything; only use 'api', 'root', and standard browser globals.
 
+## Relays: use the outbox model (NIP-65) by default
+Nostr has no central server — each user reads and writes on THEIR OWN relays. The right way to find someone's events is to fetch them from the relays that user publishes to (their "write"/outbox relays), NOT from one fixed relay list. api.query/api.subscribe/api.publish already do this for you: they look up each author's NIP-65 relay list and route per-author automatically. So the rule is: just give filters with 'authors' and let the api route — do NOT collect, hardcode, or pass relay URLs around. api.relays is only a small set of discovery/seed relays used to bootstrap those lookups and as a fallback for users who have no relay list anywhere; do not treat it as "the relays for everything." Only reach for api.queryAt/api.subscribeAt/api.publishAt (explicit relays) when a view genuinely needs a specific fixed relay, e.g. a single-relay browser.
+
 api surface:
-- api.relays            -> string[] of the user's relay URLs
-- api.query(filters, opts?) -> Promise<event[]> (one-shot; newest-first, de-duplicated). filters is a NIP-01 filter or array of them. opts.timeout ms.
-- api.subscribe(filters, onEvent, opts?) -> returns an unsubscribe() function (live, incl. new events). If you call subscribe, RETURN the unsubscribe function from your code so it is cleaned up when the view closes.
-- api.publish({ kind, content, tags? }) -> Promise<{event, results}> (signs via the user's NIP-07 extension).
+- api.query(filters, opts?) -> Promise<event[]> (one-shot; newest-first, de-duplicated; outbox-routed by author). filters is a NIP-01 filter or array of them. opts.timeout ms.
+- api.subscribe(filters, onEvent, opts?) -> returns an unsubscribe() function (live, incl. new events; outbox-routed). If you call subscribe, RETURN the unsubscribe function from your code so it is cleaned up when the view closes.
+- api.publish({ kind, content, tags? }, opts?) -> Promise<{event, results}> (signs via the user's NIP-07 extension; sends to the user's own write relays).
+- api.relayListFor(pubkey, opts?) -> Promise<{ read: string[], write: string[] }> a user's NIP-65 relay list (cached). Useful for inbox features (reach a user on their read relays) or showing where someone publishes.
+- api.relays -> string[] of discovery/seed/fallback relay URLs (NOT a per-user list; see above).
+- api.queryAt(relays, filters, opts?) / api.subscribeAt(relays, filters, onEvent, opts?) / api.publishAt(relays, draft) -> explicit-relay escape hatches that bypass outbox routing.
 - api.signer.getPublicKey() -> Promise<hex pubkey>
 - api.nip19.npubEncode(hex) / .noteEncode(hex) / .decode(str) / .toHexPubkey(npubOrHex)
 - api.el(tag, props?, children?) -> element. props: { class, text, style:{}, onClick, ...attrs }. children: node | string | array.
@@ -95,7 +100,7 @@ const TOOLS = [
   },
   {
     name: 'query_relays',
-    description: 'Run a one-shot Nostr query against the user\'s relays and return matching events (capped). Use to inspect real data before building a view.',
+    description: 'Run a one-shot Nostr query and return matching events (capped). Routed via the outbox model (NIP-65): when the filter names authors, each author is queried on their own write relays, with the seed relays as fallback/discovery. Use to inspect real data before building a view.',
     input_schema: {
       type: 'object',
       properties: {
@@ -107,7 +112,7 @@ const TOOLS = [
   },
   {
     name: 'get_context',
-    description: 'Get the current signer public key (if connected) and the configured relays.',
+    description: 'Get the current signer public key (if connected) and the configured seed/discovery relays (the outbox-model fallback, not a per-user list).',
     input_schema: { type: 'object', properties: {} },
   },
 ];
@@ -153,7 +158,7 @@ async function dispatch(name, input) {
       // Gemini may hand us the filter as a JSON string (see sanitizeSchema); tolerate both.
       let filters = input.filters;
       if (typeof filters === 'string') { try { filters = JSON.parse(filters); } catch {} }
-      const events = await nostr.query(project.settings.relays, filters, { timeout: input.timeout ?? 4000 });
+      const events = await nostr.outboxQuery(project.settings.relays, filters, { timeout: input.timeout ?? 4000 });
       const trimmed = events.slice(0, 20).map((e) => ({
         id: e.id, pubkey: e.pubkey, kind: e.kind, created_at: e.created_at,
         tags: e.tags, content: (e.content || '').slice(0, 500),
@@ -379,7 +384,7 @@ function setAvatar(url, name) {
 // Fetch the signed-in user's profile metadata (kind 0) and pull their picture.
 async function loadUserProfile(pubkey) {
   try {
-    const events = await nostr.query(
+    const events = await nostr.outboxQuery(
       project.settings.relays,
       { kinds: [0], authors: [pubkey], limit: 1 },
       { timeout: 4000 },
