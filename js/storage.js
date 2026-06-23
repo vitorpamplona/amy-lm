@@ -8,7 +8,11 @@ const DEFAULTS = {
   name: 'untitled project',
   settings: {
     apiKey: '',
-    provider: '', // 'anthropic' | 'openai' | 'google'; set when a key is connected
+    provider: '', // 'anthropic' | 'openai' | 'google' | 'openai-compatible'; set when a key is connected
+    // Base URL for an OpenAI-compatible endpoint (Ollama, LM Studio, OpenRouter,
+    // Groq, Together, …). When set, Amy talks to it in the OpenAI format instead
+    // of one of the built-in providers. Empty for Claude / OpenAI / Gemini.
+    baseUrl: '',
     model: 'claude-opus-4-8',
     relays: ['wss://relay.damus.io', 'wss://nos.lol'],
     // Remembered NIP-07 identity so a returning nostr user is recognized
