@@ -31,8 +31,8 @@
       </div>
     </div>
     <div class="top-actions">
-      <span id="claude-status" class="pill" title="Claude connection status">not connected</span>
-      <button id="btn-connect-claude" class="ghost">Log in with Claude</button>
+      <span id="claude-status" class="pill" title="LLM connection status">not connected</span>
+      <button id="btn-connect-claude" class="ghost">Log in</button>
       <span id="signer-status" class="pill" title="NIP-07 signer status">no signer</span>
       <button id="btn-connect-signer" class="ghost">Connect signer</button>
       <button id="btn-theme" class="ghost icon" title="Toggle light / dark theme" aria-label="Toggle theme"></button>
@@ -80,16 +80,16 @@
       <h3>Settings</h3>
 
       <div class="field">
-        <span class="field-label">Claude connection</span>
+        <span class="field-label">LLM connection</span>
         <div class="conn-row">
           <span id="set-claude-state" class="muted">Not connected.</span>
-          <button type="button" id="set-manage-claude" class="ghost">Log in with Claude</button>
+          <button type="button" id="set-manage-claude" class="ghost">Log in</button>
         </div>
-        <small>Amy talks to Claude with your own Anthropic key, stored only in this browser.</small>
+        <small>Amy talks to Claude or Gemini with your own API key, stored only in this browser.</small>
       </div>
 
       <label>Model
-        <input type="text" id="set-model" placeholder="claude-opus-4-8" />
+        <input type="text" id="set-model" placeholder="claude-opus-4-8 / gemini-2.5-pro" />
       </label>
 
       <label>Relays (one wss:// URL per line)
@@ -107,26 +107,28 @@
     </form>
   </dialog>
 
-  <!-- Log in with Claude (guided, client-only) -->
+  <!-- Log in (guided, client-only) -->
   <dialog id="connect-dialog">
     <form method="dialog" id="connect-form">
-      <h3>Log in with Claude</h3>
+      <h3>Log in</h3>
       <p class="muted">
         Amy runs entirely in your browser — there is no server to hold a session.
-        You connect Claude with your own Anthropic API key, which is stored only in
-        this browser (localStorage) and sent straight to the Anthropic API.
+        Connect with your own <strong>Claude</strong> or <strong>Gemini</strong> API key,
+        which is stored only in this browser (localStorage) and sent straight to the
+        provider. Amy detects which one you paste.
       </p>
 
       <ol class="steps">
         <li>
-          <span>Create an API key in the Anthropic Console (free to make).</span>
-          <a id="connect-open-console" class="btn-link" href="#" target="_blank" rel="noopener">
-            Open Anthropic Console ↗
-          </a>
+          <span>Create a free API key from whichever you use:</span>
+          <span class="console-links">
+            <a id="connect-open-anthropic" class="btn-link" href="#" target="_blank" rel="noopener">Anthropic Console ↗</a>
+            <a id="connect-open-google" class="btn-link" href="#" target="_blank" rel="noopener">Google AI Studio ↗</a>
+          </span>
         </li>
         <li>
-          <span>Copy the key (it starts with <code>sk-ant-</code>) and paste it here:</span>
-          <input type="password" id="connect-apikey" placeholder="sk-ant-…" autocomplete="off" />
+          <span>Paste the key here (<code>sk-ant-…</code> for Claude, <code>AIza…</code> for Gemini):</span>
+          <input type="password" id="connect-apikey" placeholder="sk-ant-… or AIza…" autocomplete="off" />
         </li>
       </ol>
 
