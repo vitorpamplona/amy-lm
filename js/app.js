@@ -37,7 +37,7 @@ api surface:
 - api.relays            -> string[] of the user's relay URLs
 - api.query(filters, opts?) -> Promise<event[]> (one-shot; newest-first, de-duplicated). filters is a NIP-01 filter or array of them. opts.timeout ms.
 - api.subscribe(filters, onEvent, opts?) -> returns an unsubscribe() function (live, incl. new events). If you call subscribe, RETURN the unsubscribe function from your code so it is cleaned up when the view closes.
-- api.publish({ kind, content, tags? }) -> Promise<{event, results}> (signs via the user's NIP-07 extension).
+- api.publish({ kind, content, tags? }) -> Promise<{event, results}> (signs via the user's NIP-07 extension). It always publishes to ALL of api.relays — there is no relay subset argument. results is an array of { url, ok, error } you can render for per-relay status.
 - api.signer.getPublicKey() -> Promise<hex pubkey>
 - api.nip19.npubEncode(hex) / .noteEncode(hex) / .decode(str) / .toHexPubkey(npubOrHex)
 - api.el(tag, props?, children?) -> element. props: { class, text, style:{}, onClick, ...attrs }. children: node | string | array.
@@ -46,6 +46,9 @@ api surface:
 
 Guidance:
 - Write self-contained, defensive code. Show a loading state, then render. Catch errors and show them in 'root'.
+- Never call .length, .map, or [] indexing on a value you have not proven is an array. Queries can return [], api calls can resolve to undefined, and event.tags/content may be missing — guard with (value || []) or an explicit check before iterating.
+- api.getState() returns the view's persisted object, which starts as {} on first run, so every field you read from it is undefined until you set it. Initialize state (e.g. const { servers = [] } = api.getState()) before using it, and call api.setState to persist changes.
+- The user's "servers"/relays are exactly api.relays (always a string[]). If you build a relay or "server" selector, drive it from api.relays — do not assume any other source of relay/server lists exists.
 - Profile (kind 0) content is JSON: parse for { name, display_name, picture, about }.
 - The host app provides matching light and dark themes. Inline styles are fine, but prefer the host CSS variables so your view adapts to both: var(--text), var(--muted), var(--panel-2) / var(--panel-3) for surfaces, var(--border) for lines, var(--accent) and var(--accent-2) for emphasis, var(--radius) for corners. Avoid hard-coded black/white backgrounds.
 - Prefer api.query for fetch-once lists; use api.subscribe only for live feeds.
