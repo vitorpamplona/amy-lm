@@ -691,7 +691,9 @@ function refreshClaudeStatus() {
   const provider = project.settings.provider || detectProvider(project.settings.apiKey, project.settings.baseUrl);
   const label = provider ? PROVIDERS[provider].label : 'LLM';
   const pill = $('#claude-status');
-  pill.textContent = connected ? `${label} connected` : 'not connected';
+  // The green `.ok` styling already signals "connected", so the word is redundant;
+  // a leading dot marks the live state for anyone who can't perceive the color shift.
+  pill.textContent = connected ? `● ${label}` : 'not connected';
   pill.classList.toggle('ok', connected);
   $('#btn-connect-claude').textContent = connected ? label : 'Log in';
   // Settings mirror, if present.
