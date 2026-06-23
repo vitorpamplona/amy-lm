@@ -35,11 +35,19 @@ python3 -m http.server 8000
 
 ## First-time setup
 
-1. Open **Settings** and paste your Anthropic API key. It is stored only in
-   this browser's `localStorage`. Optionally set the model and relays.
+1. Click **Log in with Claude** (top right). The guided dialog links you to the
+   Anthropic Console to create an API key; paste it back and Amy verifies it
+   live before connecting. The key is stored only in this browser's
+   `localStorage` and sent directly to the Anthropic API. (Model and relays live
+   in **Settings**.)
 2. (Optional) Click **Connect signer** to authorize your NIP-07 extension so
    views can read your pubkey and publish on your behalf.
 3. Ask the chat to build something.
+
+> **Why not a real "Sign in with Claude" OAuth?** Amy has no server, and
+> Anthropic's OAuth token endpoint doesn't send CORS headers for third-party
+> web origins, so the browser can't complete the token exchange. The guided
+> key connection above is the serverless equivalent.
 
 ## How it works
 

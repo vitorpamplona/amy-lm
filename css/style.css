@@ -356,6 +356,49 @@ dialog[open] { animation: pop .18s ease; }
   margin: 4px 0 0; padding: 0;
 }
 
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field-label { font-weight: 600; }
+.field small { color: var(--muted); line-height: 1.4; }
+.conn-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.muted { color: var(--muted); }
+.muted.ok, .connect-status.ok { color: var(--ok); }
+
+/* Log in with Claude dialog */
+#connect-form { padding: 22px; display: flex; flex-direction: column; gap: 16px; }
+#connect-form h3 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
+#connect-form .muted { font-size: 13px; line-height: 1.55; margin: 0; }
+#connect-form code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+.steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 14px; }
+.steps li { line-height: 1.55; }
+.steps li > span { display: block; margin-bottom: 7px; }
+.steps input {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  font: inherit;
+}
+.steps input:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.btn-link {
+  display: inline-block;
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+.btn-link:hover { text-decoration: underline; }
+.connect-status { min-height: 18px; font-size: 13px; color: var(--muted); }
+.connect-status.error { color: var(--danger); }
+#connect-form menu { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; padding: 0; }
+#connect-form menu .spacer { flex: 1 1 auto; }
+
 /* ---------------------------------------------------------------------------
    Animations & responsive
 --------------------------------------------------------------------------- */
