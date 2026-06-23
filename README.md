@@ -40,7 +40,7 @@ python3 -m http.server 8000
    [Anthropic Console](https://console.anthropic.com/settings/keys) (Claude) and
    [Google AI Studio](https://aistudio.google.com/apikey) (Gemini) to create a
    free API key. Paste either one — Amy detects the provider from the key
-   (`sk-ant-…` → Claude, `AIza…` → Gemini) and verifies it live before
+   (`sk-ant-…` → Claude, `AIza…`/`AQ.…` → Gemini) and verifies it live before
    connecting. The key is stored only in this browser's `localStorage` and sent
    directly to that provider's API. (Model and relays live in **Settings**.)
 2. (Optional) Click **Connect signer** to authorize your NIP-07 extension so

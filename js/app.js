@@ -456,7 +456,7 @@ function reflectDetectedProvider() {
   if (!key) { setConnectStatus(''); return; }
   const provider = detectProvider(key);
   if (provider) setConnectStatus(`Detected a ${PROVIDERS[provider].label} key.`, 'ok');
-  else setConnectStatus('Unrecognized key — expected sk-ant-… (Claude) or AIza… (Gemini).', '');
+  else setConnectStatus('Unrecognized key — expected sk-ant-… (Claude) or AIza…/AQ.… (Gemini).', '');
 }
 
 async function submitConnect() {
