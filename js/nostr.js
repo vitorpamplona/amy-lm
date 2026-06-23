@@ -217,12 +217,15 @@ function reqOnce(url, filterArr, opts = {}) {
 async function paginate(url, filter, opts = {}) {
   const singleRound = opts.paginate === false || !!filter.search;
   const maxPages = opts.maxPages ?? 25;
+  const aborted = opts.aborted || (() => false); // lets subscribe() stop a backfill
+  const onEvent = opts.onEvent;                  // stream each new event as it lands
   const since = filter.since;
   const target = typeof filter.limit === 'number' ? filter.limit : Infinity;
   const unbounded = target === Infinity && since === undefined;
   const collected = new Map(); // id -> event
   let until = filter.until;
   for (let round = 0; ; round++) {
+    if (aborted()) break;
     const remaining = target === Infinity ? undefined : target - collected.size;
     if (remaining !== undefined && remaining <= 0) break;
     const f = { ...filter };
@@ -231,7 +234,7 @@ async function paginate(url, filter, opts = {}) {
     const evs = await reqOnce(url, [f], opts);
     let added = 0, oldest = Infinity;
     for (const ev of evs) {
-      if (ev.id && !collected.has(ev.id)) { collected.set(ev.id, ev); added++; }
+      if (ev.id && !collected.has(ev.id)) { collected.set(ev.id, ev); added++; if (onEvent && !aborted()) onEvent(ev); }
       if (typeof ev.created_at === 'number' && ev.created_at < oldest) oldest = ev.created_at;
     }
     if (singleRound || added === 0 || oldest === Infinity) break;
@@ -281,29 +284,78 @@ export async function query(relays, filters, opts = {}) {
 }
 
 /**
- * Live subscription. Calls onEvent for each event (incl. ones arriving after EOSE).
- * Returns an unsubscribe function.
+ * Live subscription with automatic historical backfill. Calls onEvent for each
+ * event (incl. ones arriving after EOSE) and returns an unsubscribe function.
+ *
+ * Two parts run concurrently and feed the same de-duplicated onEvent, so the
+ * caller sees one merged stream:
+ *   - a LIVE sub per relay (the filter with `since` = now) that stays open and
+ *     delivers FUTURE events as they are published, and
+ *   - a BACKFILL that paginates the PAST (from `until` = now backwards) exactly
+ *     like query() — walking an `until` cursor until the relay is exhausted, the
+ *     filter's `limit` is reached, or the cursor passes its `since`.
+ * So a large backlog loads page by page while new events still arrive live,
+ * with no gap at the boundary: the two overlap only at `now` and dedupe by id.
+ *
+ * A filter whose `until` is already in the past is a closed historical window —
+ * backfilled only, no live sub. NIP-50 search filters (and opts.paginate ===
+ * false / opts.backfill === false) skip the split and open a single plain REQ,
+ * since until-paging would scramble relevance order.
+ *
+ * opts.onEose (optional) fires once when the initial backfill across every relay
+ * and filter has finished — the "history loaded" signal for a UI.
  */
 export function subscribe(relays, filters, onEvent, opts = {}) {
   const filterArr = Array.isArray(filters) ? filters : [filters];
-  const subId = nextSubId();
+  const now = Math.floor(Date.now() / 1000);
   const seen = new Set();
+  const deliver = (ev, url) => { if (ev && ev.id && !seen.has(ev.id)) { seen.add(ev.id); onEvent(ev, url); } };
+
+  let stopped = false;
   const closers = [];
-  for (const url of relays) {
-    let ws;
-    try { ws = connect(url); } catch { continue; }
-    ws._subs.set(subId, {
-      onEvent: (ev) => { if (ev && ev.id && !seen.has(ev.id)) { seen.add(ev.id); onEvent(ev, url); } },
-      onEose: opts.onEose,
-      filters: filterArr, // kept so a NIP-42 auth-required REQ can be replayed
-    });
-    whenOpen(ws).then(() => ws.send(JSON.stringify(['REQ', subId, ...filterArr]))).catch(() => {});
-    closers.push(() => {
-      ws._subs.delete(subId);
-      try { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(['CLOSE', subId])); } catch {}
-    });
-  }
-  return () => closers.forEach((c) => c());
+
+  // Open one long-lived REQ per relay for `liveFilters` (no idle timeout — it
+  // stays open until unsubscribe and streams events as they arrive).
+  const openLive = (liveFilters) => {
+    const subId = nextSubId();
+    for (const url of relays) {
+      let ws;
+      try { ws = connect(url); } catch { continue; }
+      ws._subs.set(subId, {
+        onEvent: (ev) => deliver(ev, url),
+        filters: liveFilters, // kept so a NIP-42 auth-required REQ can be replayed
+      });
+      whenOpen(ws).then(() => ws.send(JSON.stringify(['REQ', subId, ...liveFilters]))).catch(() => {});
+      closers.push(() => {
+        ws._subs.delete(subId);
+        try { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(['CLOSE', subId])); } catch {}
+      });
+    }
+  };
+
+  const noSplit = (f) => f.search || opts.paginate === false || opts.backfill === false;
+
+  // Search / opt-out filters: one plain open REQ, as-is (no since/until rewrite).
+  const plain = filterArr.filter(noSplit);
+  if (plain.length) openLive(plain);
+
+  const split = filterArr.filter((f) => !noSplit(f));
+
+  // Live part: future events only, and only for open-ended filters (a filter
+  // with `until` in the past has no future to watch). Drop limit/until.
+  const liveFilters = split
+    .filter((f) => f.until === undefined || f.until >= now)
+    .map((f) => { const g = { ...f, since: now }; delete g.until; delete g.limit; return g; });
+  if (liveFilters.length) openLive(liveFilters);
+
+  // Backfill part: paginate each split filter's past (until = now), streaming
+  // events through `deliver` and bailing out promptly when unsubscribed.
+  Promise.all(relays.flatMap((url) =>
+    split.map((f) => paginate(url, { ...f, until: f.until ?? now },
+      { ...opts, onEvent: (ev) => deliver(ev, url), aborted: () => stopped }))
+  )).then(() => { if (!stopped && opts.onEose) opts.onEose(); }).catch(() => {});
+
+  return () => { stopped = true; closers.forEach((c) => c()); };
 }
 
 /**
