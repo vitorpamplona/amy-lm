@@ -5,6 +5,7 @@ import * as store from './storage.js';
 import * as nostr from './nostr.js';
 import * as views from './views.js';
 import { converse } from './claude.js';
+import { verifyApiKey, CONSOLE_KEYS_URL } from './auth.js';
 
 // ---------------------------------------------------------------------------
 // State
@@ -266,7 +267,7 @@ async function onSend(e) {
   if (busy) return;
   const text = $('#prompt').value.trim();
   if (!text) return;
-  if (!project.settings.apiKey) { openSettings(); setStatus('Add an Anthropic API key to start.'); return; }
+  if (!project.settings.apiKey) { openConnect(); setStatus('Log in with Claude to start.'); return; }
 
   $('#prompt').value = '';
   project.chat.push({ role: 'user', content: text });
@@ -325,21 +326,94 @@ async function connectSigner() {
 }
 
 function openSettings() {
-  $('#set-apikey').value = project.settings.apiKey;
   $('#set-model').value = project.settings.model;
   $('#set-relays').value = project.settings.relays.join('\n');
   $('#set-projname').value = project.name;
+  refreshClaudeStatus();
   $('#settings-dialog').showModal();
 }
 
 function saveSettingsFromForm() {
-  project.settings.apiKey = $('#set-apikey').value.trim();
   project.settings.model = $('#set-model').value.trim() || 'claude-opus-4-8';
   project.settings.relays = $('#set-relays').value.split('\n').map((s) => s.trim()).filter(Boolean);
   project.name = $('#set-projname').value.trim() || 'untitled project';
   persist();
   $('#project-name').textContent = project.name;
   renderActiveView(); // relays may have changed
+}
+
+// ---------------------------------------------------------------------------
+// Log in with Claude (guided, client-only — see js/auth.js)
+// ---------------------------------------------------------------------------
+function maskKey(key) {
+  if (!key) return '';
+  return key.length <= 12 ? key : key.slice(0, 7) + '…' + key.slice(-4);
+}
+
+function refreshClaudeStatus() {
+  const connected = !!project.settings.apiKey;
+  const pill = $('#claude-status');
+  pill.textContent = connected ? 'Claude connected' : 'not connected';
+  pill.classList.toggle('ok', connected);
+  $('#btn-connect-claude').textContent = connected ? 'Claude' : 'Log in with Claude';
+  // Settings mirror, if present.
+  const state = $('#set-claude-state');
+  if (state) {
+    state.textContent = connected ? `Connected (${maskKey(project.settings.apiKey)}).` : 'Not connected.';
+    state.classList.toggle('ok', connected);
+  }
+  const manage = $('#set-manage-claude');
+  if (manage) manage.textContent = connected ? 'Manage' : 'Log in with Claude';
+}
+
+function setConnectStatus(text, kind = '') {
+  const el = $('#connect-status');
+  el.textContent = text;
+  el.className = 'connect-status' + (kind ? ' ' + kind : '');
+}
+
+function openConnect() {
+  $('#connect-open-console').href = CONSOLE_KEYS_URL;
+  $('#connect-apikey').value = project.settings.apiKey || '';
+  $('#connect-disconnect').hidden = !project.settings.apiKey;
+  setConnectStatus(project.settings.apiKey ? 'Claude is connected. Paste a new key to replace it.' : '');
+  if ($('#settings-dialog').open) $('#settings-dialog').close();
+  $('#connect-dialog').showModal();
+  $('#connect-apikey').focus();
+}
+
+async function submitConnect() {
+  const key = $('#connect-apikey').value.trim();
+  const submit = $('#connect-submit');
+  submit.disabled = true;
+  setConnectStatus('Verifying with Anthropic…', '');
+  try {
+    const { models } = await verifyApiKey(key);
+    project.settings.apiKey = key;
+    // If the configured model isn't offered by this account, fall back to one
+    // that is, so the very first message doesn't fail.
+    if (models.length && !models.includes(project.settings.model)) {
+      project.settings.model = models[0];
+    }
+    persist();
+    refreshClaudeStatus();
+    setConnectStatus('Connected! You can close this and start chatting.', 'ok');
+    setStatus('');
+    setTimeout(() => $('#connect-dialog').close(), 700);
+  } catch (err) {
+    setConnectStatus(err.message || String(err), 'error');
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+function disconnectClaude() {
+  project.settings.apiKey = '';
+  persist();
+  refreshClaudeStatus();
+  $('#connect-apikey').value = '';
+  $('#connect-disconnect').hidden = true;
+  setConnectStatus('Disconnected.', '');
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +425,7 @@ function init() {
   renderActiveView();
   renderChatHistory();
   refreshSignerStatus();
+  refreshClaudeStatus();
 
   $('#composer').addEventListener('submit', onSend);
   $('#prompt').addEventListener('keydown', (e) => {
@@ -361,6 +436,16 @@ function init() {
   $('#settings-dialog').addEventListener('close', () => {
     if ($('#settings-dialog').returnValue === 'save') saveSettingsFromForm();
   });
+
+  // Log in with Claude
+  $('#btn-connect-claude').addEventListener('click', openConnect);
+  $('#set-manage-claude').addEventListener('click', openConnect);
+  $('#connect-submit').addEventListener('click', submitConnect);
+  $('#connect-cancel').addEventListener('click', () => $('#connect-dialog').close());
+  $('#connect-disconnect').addEventListener('click', disconnectClaude);
+  $('#connect-apikey').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submitConnect(); }
+  });
   $('#btn-reset').addEventListener('click', () => {
     if (!confirm('Wipe this local project (views, chat, settings)? This cannot be undone.')) return;
     store.reset();
@@ -370,7 +455,7 @@ function init() {
     renderTabs(); renderActiveView(); renderChatHistory();
   });
 
-  if (!project.settings.apiKey) setStatus('Open Settings to add your Anthropic API key, then ask Amy to build a view.');
+  if (!project.settings.apiKey) setStatus('Log in with Claude (top right) to start, then ask Amy to build a view.');
 }
 
 init();

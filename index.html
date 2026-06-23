@@ -16,6 +16,8 @@
       </div>
     </div>
     <div class="top-actions">
+      <span id="claude-status" class="pill" title="Claude connection status">not connected</span>
+      <button id="btn-connect-claude" class="ghost">Log in with Claude</button>
       <span id="signer-status" class="pill" title="NIP-07 signer status">no signer</span>
       <button id="btn-connect-signer" class="ghost">Connect signer</button>
       <button id="btn-settings" class="ghost">Settings</button>
@@ -61,10 +63,14 @@
     <form method="dialog" id="settings-form">
       <h3>Settings</h3>
 
-      <label>Anthropic API key
-        <input type="password" id="set-apikey" placeholder="sk-ant-…" autocomplete="off" />
-        <small>Stored only in this browser (localStorage). Calls go directly to the Anthropic API.</small>
-      </label>
+      <div class="field">
+        <span class="field-label">Claude connection</span>
+        <div class="conn-row">
+          <span id="set-claude-state" class="muted">Not connected.</span>
+          <button type="button" id="set-manage-claude" class="ghost">Log in with Claude</button>
+        </div>
+        <small>Amy talks to Claude with your own Anthropic key, stored only in this browser.</small>
+      </div>
 
       <label>Model
         <input type="text" id="set-model" placeholder="claude-opus-4-8" />
@@ -81,6 +87,40 @@
       <menu>
         <button value="cancel" class="ghost">Cancel</button>
         <button value="save" id="set-save">Save</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <!-- Log in with Claude (guided, client-only) -->
+  <dialog id="connect-dialog">
+    <form method="dialog" id="connect-form">
+      <h3>Log in with Claude</h3>
+      <p class="muted">
+        Amy runs entirely in your browser — there is no server to hold a session.
+        You connect Claude with your own Anthropic API key, which is stored only in
+        this browser (localStorage) and sent straight to the Anthropic API.
+      </p>
+
+      <ol class="steps">
+        <li>
+          <span>Create an API key in the Anthropic Console (free to make).</span>
+          <a id="connect-open-console" class="btn-link" href="#" target="_blank" rel="noopener">
+            Open Anthropic Console ↗
+          </a>
+        </li>
+        <li>
+          <span>Copy the key (it starts with <code>sk-ant-</code>) and paste it here:</span>
+          <input type="password" id="connect-apikey" placeholder="sk-ant-…" autocomplete="off" />
+        </li>
+      </ol>
+
+      <div id="connect-status" class="connect-status" role="status"></div>
+
+      <menu>
+        <button type="button" id="connect-disconnect" class="ghost danger" hidden>Disconnect</button>
+        <span class="spacer"></span>
+        <button type="button" id="connect-cancel" class="ghost">Cancel</button>
+        <button type="button" id="connect-submit">Log in</button>
       </menu>
     </form>
   </dialog>
