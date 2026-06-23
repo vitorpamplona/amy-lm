@@ -67,7 +67,9 @@
 
 html, body {
   margin: 0;
-  height: 100%;
+  height: 100vh;      /* fallback for browsers without dvh */
+  height: 100dvh;     /* track the *visible* viewport so mobile browser chrome
+                         (URL bar, tab strip) never leaves a gap at the bottom */
   background: var(--bg);
   color: var(--text);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -469,6 +471,35 @@ dialog[open] { animation: pop .18s ease; }
 #connect-form menu .spacer, #signer-form menu .spacer { flex: 1 1 auto; }
 
 /* ---------------------------------------------------------------------------
+   Confirm dialog (designed replacement for window.confirm)
+--------------------------------------------------------------------------- */
+dialog.confirm { width: min(420px, 92vw); }
+#confirm-form {
+  padding: 24px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  align-items: start;
+}
+.confirm-icon {
+  grid-row: 1 / 2;
+  width: 44px; height: 44px;
+  display: grid; place-items: center;
+  border-radius: 999px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+.confirm-icon svg { width: 22px; height: 22px; }
+.confirm-body { grid-column: 2; align-self: center; }
+.confirm-body h3 { margin: 0 0 6px; font-size: 17px; letter-spacing: -.01em; }
+.confirm-body p { margin: 0; line-height: 1.5; font-size: 13px; }
+#confirm-form menu {
+  grid-column: 1 / -1;
+  display: flex; justify-content: flex-end; gap: 8px;
+  margin: 18px 0 0; padding: 0;
+}
+
+/* ---------------------------------------------------------------------------
    Animations & responsive
 --------------------------------------------------------------------------- */
 @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
@@ -478,7 +509,7 @@ dialog[open] { animation: pop .18s ease; }
   /* Stack canvas over chat. minmax(0, …) lets the canvas row shrink instead of
      growing to its content's height, which would otherwise shove the chat off
      the bottom of the screen on mobile. */
-  #layout { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) 45vh; }
+  #layout { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) 45dvh; }
   #chat { border-top: 1px solid var(--border); }
   /* Extra tap padding for text buttons only — not the fixed-size avatar
      circle, whose padding must stay 0 so its icon stays centered. */
