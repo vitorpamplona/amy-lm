@@ -32,12 +32,21 @@
     </div>
     <div class="top-actions">
       <span id="claude-status" class="pill" title="LLM connection status">not connected</span>
-      <button id="btn-connect-claude" class="ghost">Log in</button>
-      <span id="signer-status" class="pill" title="NIP-07 signer status">no signer</span>
-      <button id="btn-connect-signer" class="ghost">Connect signer</button>
-      <button id="btn-theme" class="ghost icon" title="Toggle light / dark theme" aria-label="Toggle theme"></button>
-      <button id="btn-settings" class="ghost">Settings</button>
-      <button id="btn-reset" class="ghost danger" title="Wipe the local project">Reset</button>
+      <div class="user-menu">
+        <button id="user-menu-btn" class="avatar-btn" aria-haspopup="true" aria-expanded="false" aria-controls="user-dropdown" title="Menu" aria-label="Open menu">
+          <img id="user-avatar" alt="" hidden />
+          <svg id="user-avatar-fallback" class="avatar-fallback" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.42 0-8 2.69-8 6v1h16v-1c0-3.31-3.58-6-8-6Z"/>
+          </svg>
+        </button>
+        <div id="user-dropdown" class="dropdown" role="menu" hidden>
+          <button id="btn-connect-claude" class="menu-item" role="menuitem">Log in</button>
+          <button id="btn-connect-signer" class="menu-item" role="menuitem">Connect signer</button>
+          <button id="btn-theme" class="menu-item" role="menuitem" title="Toggle light / dark theme"></button>
+          <button id="btn-settings" class="menu-item" role="menuitem">Settings</button>
+          <button id="btn-reset" class="menu-item danger" role="menuitem" title="Wipe the local project">Reset</button>
+        </div>
+      </div>
     </div>
   </header>
 
