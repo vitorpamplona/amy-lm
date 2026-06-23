@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Amy — a Nostr client that builds itself</title>
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">
+      <span class="logo">⚡</span>
+      <div>
+        <strong>Amy</strong>
+        <small id="project-name">untitled project</small>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span id="signer-status" class="pill" title="NIP-07 signer status">no signer</span>
+      <button id="btn-connect-signer" class="ghost">Connect signer</button>
+      <button id="btn-settings" class="ghost">Settings</button>
+      <button id="btn-reset" class="ghost danger" title="Wipe the local project">Reset</button>
+    </div>
+  </header>
+
+  <main id="layout">
+    <!-- Left: the views the user has built -->
+    <section id="canvas">
+      <div id="canvas-tabs"></div>
+      <div id="canvas-body">
+        <div id="empty-canvas" class="empty">
+          <h2>Your client is empty.</h2>
+          <p>
+            Amy knows Nostr, how to read NIPs, and how to talk to your NIP-07 signer.
+            Ask the chat on the right to build you an interface — a feed, a profile card,
+            a publish box — and it will appear here as a live view.
+          </p>
+          <ul class="suggestions">
+            <li>“Build me a view that shows the latest 20 notes (kind 1) from my relays.”</li>
+            <li>“Make a profile card for an npub I paste in.”</li>
+            <li>“Give me a box to publish a short text note, signed by my extension.”</li>
+            <li>“Read NIP-51 and build a view of my bookmarked notes.”</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right: the Claude chat that builds the client -->
+    <section id="chat">
+      <div id="messages"></div>
+      <form id="composer">
+        <textarea id="prompt" rows="2" placeholder="Ask Amy to build or change a view…"></textarea>
+        <button id="send" type="submit">Send</button>
+      </form>
+      <div id="chat-status"></div>
+    </section>
+  </main>
+
+  <!-- Settings dialog -->
+  <dialog id="settings-dialog">
+    <form method="dialog" id="settings-form">
+      <h3>Settings</h3>
+
+      <label>Anthropic API key
+        <input type="password" id="set-apikey" placeholder="sk-ant-…" autocomplete="off" />
+        <small>Stored only in this browser (localStorage). Calls go directly to the Anthropic API.</small>
+      </label>
+
+      <label>Model
+        <input type="text" id="set-model" placeholder="claude-opus-4-8" />
+      </label>
+
+      <label>Relays (one wss:// URL per line)
+        <textarea id="set-relays" rows="5" placeholder="wss://relay.damus.io"></textarea>
+      </label>
+
+      <label>Project name
+        <input type="text" id="set-projname" placeholder="untitled project" />
+      </label>
+
+      <menu>
+        <button value="cancel" class="ghost">Cancel</button>
+        <button value="save" id="set-save">Save</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
