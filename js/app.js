@@ -240,7 +240,11 @@ function renderTabs() {
     x.className = 'x';
     x.textContent = '×';
     x.title = 'Delete view';
-    x.onclick = (e) => { e.stopPropagation(); dispatch('delete_view', { id: v.id }); };
+    x.onclick = (e) => {
+      e.stopPropagation();
+      if (!confirm(`Close the view "${v.title}"? This cannot be undone.`)) return;
+      dispatch('delete_view', { id: v.id });
+    };
     tab.append(label, x);
     tabs.append(tab);
   }
