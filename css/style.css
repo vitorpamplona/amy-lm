@@ -146,6 +146,10 @@ button, .pill, .tab, input, textarea, dialog, .msg .bubble {
 .avatar-btn:focus-visible { outline: none; box-shadow: var(--ring); }
 .avatar-btn.connected { border-color: color-mix(in srgb, var(--ok) 55%, var(--border)); }
 #user-avatar { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* An ID selector outranks the UA [hidden] rule, so restore it explicitly —
+   otherwise the empty, logged-out <img> stays in the grid and shoves the
+   fallback silhouette off-center. */
+#user-avatar[hidden] { display: none; }
 .avatar-fallback { width: 20px; height: 20px; fill: currentColor; }
 
 .dropdown {
