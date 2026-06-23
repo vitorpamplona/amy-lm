@@ -57,8 +57,11 @@ function makeApi(ctx) {
     query: (filters, opts) => nostr.outboxQuery(seeds, filters, opts),
     subscribe: (filters, onEvent, opts) => nostr.outboxSubscribe(seeds, filters, onEvent, opts),
     publish: (draft, opts) => nostr.outboxPublish(seeds, draft, opts),
-    // Resolve a user's NIP-65 relay list -> { read, write } (cached).
+    // Resolve a user's NIP-65 outbox relay list -> { read, write } (cached).
     relayListFor: (pubkey, opts) => nostr.relayListFor(pubkey, seeds, opts),
+    // Resolve any other per-NIP relay list -> string[] (cached). e.g. kind
+    // 10050 = NIP-17 DM relays, 10007 = search relays, 10063 = media servers.
+    relaysFromList: (pubkey, kind, opts) => nostr.relaysFromList(pubkey, kind, seeds, opts),
     // Escape hatch: talk to explicit relays, bypassing outbox routing. Use only
     // when a view genuinely needs a fixed relay (e.g. a single-relay browser).
     queryAt: (relays, filters, opts) => nostr.query(relays, filters, opts),

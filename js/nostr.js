@@ -166,6 +166,7 @@ export async function publish(relays, draft) {
 // uses. Seeds are only the fallback for users who have no relay list anywhere.
 // ---------------------------------------------------------------------------
 const relayListCache = new Map(); // pubkey -> { read: string[], write: string[] }
+const namedListCache = new Map(); // `${kind}:${pubkey}` -> string[]
 
 /** Parse a NIP-65 (kind 10002) event into { read, write } relay URL lists. */
 export function parseRelayList(ev) {
@@ -194,6 +195,34 @@ export async function relayListFor(pubkey, seedRelays, opts = {}) {
   } catch { /* fall through to empty */ }
   relayListCache.set(pubkey, list);
   return list;
+}
+
+/**
+ * Generic per-NIP relay-list resolver (cached). NIP-65 (kind 10002) is the
+ * GENERAL outbox for notes/profiles/reactions, but it is not universal — many
+ * features keep their own relay list under their own replaceable kind, e.g.
+ * 10050 (NIP-17 DM relays), 10007 (search relays), 10063 (blossom media
+ * servers), and NIP-51 relay sets. Those tag URLs with `relay` (or `r`) and
+ * usually have no read/write markers. Use this to read any of them; use
+ * relayListFor() for the markered NIP-65 outbox specifically.
+ * @returns {Promise<string[]>}
+ */
+export async function relaysFromList(pubkey, kind, seedRelays, opts = {}) {
+  const cacheKey = `${kind}:${pubkey}`;
+  if (!opts.force && namedListCache.has(cacheKey)) return namedListCache.get(cacheKey);
+  let urls = [];
+  try {
+    const evs = await query(seedRelays, { kinds: [kind], authors: [pubkey], limit: 1 }, { timeout: opts.timeout ?? 4000 });
+    const ev = evs[0];
+    if (ev) {
+      const seen = new Set();
+      for (const t of ev.tags || []) {
+        if ((t[0] === 'relay' || t[0] === 'r') && t[1] && !seen.has(t[1])) { seen.add(t[1]); urls.push(t[1]); }
+      }
+    }
+  } catch { /* fall through to empty */ }
+  namedListCache.set(cacheKey, urls);
+  return urls;
 }
 
 // Build a Map<relayUrl, filters[]> by routing each author to their write
