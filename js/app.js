@@ -73,10 +73,11 @@ api surface:
 - api.query(filters, opts?) -> Promise<event[]> (one-shot; newest-first, de-duplicated; outbox-routed by author). filters is a NIP-01 filter or array of them. opts.timeout ms.
 - api.subscribe(filters, onEvent, opts?) -> returns an unsubscribe() function (live, incl. new events; outbox-routed). If you call subscribe, RETURN the unsubscribe function from your code so it is cleaned up when the view closes.
 - api.publish({ kind, content, tags? }, opts?) -> Promise<{event, results}> (signs via the user's NIP-07 extension; sends to the user's own write relays).
+- api.count(filters, opts?) -> Promise<number> (NIP-45 COUNT; outbox-routed). Gets a count WITHOUT downloading the events — use it for follower/reaction/note totals instead of fetching everything and reading .length. It is APPROXIMATE and per-relay (counts are not additive, so it returns the largest a single relay reports), and not every relay implements NIP-45 (unsupported relays just don't answer), so show it as a ballpark and fall back gracefully if it returns 0.
 - api.relayListFor(pubkey, opts?) -> Promise<{ read: string[], write: string[] }> a user's NIP-65 outbox relay list (cached). Useful for inbox features (reach a user on their read relays) or showing where someone publishes.
 - api.relaysFromList(pubkey, kind, opts?) -> Promise<string[]> resolve any OTHER per-NIP relay list by its replaceable kind (cached). e.g. kind 10050 = NIP-17 DM relays, 10007 = search relays, 10063 = media servers.
 - api.relays -> string[] of discovery/seed/fallback relay URLs (NOT a per-user list; see above).
-- api.queryAt(relays, filters, opts?) / api.subscribeAt(relays, filters, onEvent, opts?) / api.publishAt(relays, draft) -> explicit-relay escape hatches that bypass outbox routing.
+- api.queryAt(relays, filters, opts?) / api.subscribeAt(relays, filters, onEvent, opts?) / api.publishAt(relays, draft) / api.countAt(relays, filters, opts?) -> explicit-relay escape hatches that bypass outbox routing.
 - api.signer.getPublicKey() -> Promise<hex pubkey>
 - api.nip19.npubEncode(hex) / .noteEncode(hex) / .decode(str) / .toHexPubkey(npubOrHex)
 - api.el(tag, props?, children?) -> element. props: { class, text, style:{}, onClick, ...attrs }. children: node | string | array.
