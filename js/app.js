@@ -704,7 +704,8 @@ function init() {
 
   $('#composer').addEventListener('submit', onSend);
   $('#prompt').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSend(e); }
+    // Enter sends; Shift+Enter inserts a newline.
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(e); }
   });
   refreshThemeButton();
   $('#btn-theme').addEventListener('click', () => { theme.toggle(); refreshThemeButton(); });
