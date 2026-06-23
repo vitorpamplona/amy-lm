@@ -148,32 +148,58 @@ let subCounter = 0;
 function nextSubId() { return 'amy' + (++subCounter); }
 
 /**
- * Client-side NIP-01 filter match. Relays are not trusted to return only what
- * we asked for — some send spam, leak events from other subscriptions, or have
- * over-broad indexes — so we re-check every event ourselves. This is essential
- * for pagination: junk must NOT count toward the per-round tally (or a round of
- * pure junk looks non-empty and the until-cursor never terminates) nor feed the
- * cursor, and it must never reach the app. The `search` field is full-text and
- * relay-defined, so only the structured constraints are validated here.
+ * Compile a NIP-01 filter into a fast predicate `(ev) => boolean`. Relays are
+ * not trusted to return only what we asked for — some send spam, leak events
+ * from other subscriptions, or have over-broad indexes — so we re-check every
+ * event ourselves. This is essential for pagination: junk must NOT count toward
+ * the per-round tally (or a round of pure junk looks non-empty and the
+ * until-cursor never terminates) nor feed the cursor, and it must never reach
+ * the app. The `search` field is full-text and relay-defined, so only the
+ * structured constraints are checked.
+ *
+ * The list fields (ids/authors/kinds and #tag values) are hoisted into Sets
+ * ONCE here, so each event is an O(1) lookup instead of a linear scan — matching
+ * runs per event on potentially thousands of events against filters that may
+ * carry hundreds of authors (a follow feed), so this matters.
  */
-function matchesFilter(filter, ev) {
-  if (!ev || typeof ev !== 'object' || !ev.id) return false;
-  if (filter.ids && !filter.ids.includes(ev.id)) return false;
-  if (filter.authors && !filter.authors.includes(ev.pubkey)) return false;
-  if (filter.kinds && !filter.kinds.includes(ev.kind)) return false;
-  if (filter.since !== undefined && !(ev.created_at >= filter.since)) return false;
-  if (filter.until !== undefined && !(ev.created_at <= filter.until)) return false;
-  for (const key in filter) { // '#e', '#p', '#t', … indexed single-letter tag filters
+function compileFilter(filter) {
+  const ids = filter.ids ? new Set(filter.ids) : null;
+  const authors = filter.authors ? new Set(filter.authors) : null;
+  const kinds = filter.kinds ? new Set(filter.kinds) : null;
+  const since = filter.since, until = filter.until;
+  const tagSets = []; // [{ letter, values:Set }] for each #<letter> filter
+  for (const key in filter) {
     if (key.length !== 2 || key[0] !== '#') continue;
     const want = filter[key];
-    if (!Array.isArray(want) || !want.length) continue;
-    const letter = key[1];
-    if (!(ev.tags || []).some((t) => t[0] === letter && want.includes(t[1]))) return false;
+    if (Array.isArray(want) && want.length) tagSets.push({ letter: key[1], values: new Set(want) });
   }
-  return true;
+  return (ev) => {
+    if (!ev || typeof ev !== 'object' || !ev.id) return false;
+    if (ids && !ids.has(ev.id)) return false;
+    if (authors && !authors.has(ev.pubkey)) return false;
+    if (kinds && !kinds.has(ev.kind)) return false;
+    if (since !== undefined && !(ev.created_at >= since)) return false;
+    if (until !== undefined && !(ev.created_at <= until)) return false;
+    for (let s = 0; s < tagSets.length; s++) {
+      const { letter, values } = tagSets[s];
+      const tags = ev.tags || [];
+      let ok = false;
+      for (let i = 0; i < tags.length; i++) { const t = tags[i]; if (t[0] === letter && values.has(t[1])) { ok = true; break; } }
+      if (!ok) return false;
+    }
+    return true;
+  };
 }
-/** True if the event satisfies at least one filter in the REQ (NIP-01 OR). */
-function matchesAny(filterArr, ev) { return filterArr.some((f) => matchesFilter(f, ev)); }
+/**
+ * Compile a REQ's filter array into one predicate that is true when the event
+ * satisfies AT LEAST ONE filter (NIP-01 OR). Compile once per subscription and
+ * reuse it for every event — never per event.
+ */
+function compileMatcher(filterArr) {
+  const fns = filterArr.map(compileFilter);
+  if (fns.length === 1) return fns[0];
+  return (ev) => { for (let i = 0; i < fns.length; i++) if (fns[i](ev)) return true; return false; };
+}
 
 /**
  * Low-level one-round primitive: a SINGLE REQ to ONE relay with the given
@@ -190,6 +216,7 @@ function matchesAny(filterArr, ev) { return filterArr.some((f) => matchesFilter(
 function reqOnce(url, filterArr, opts = {}) {
   const idle = opts.timeout ?? 4000;
   const subId = nextSubId();
+  const match = compileMatcher(filterArr); // compile once; run per event below
   const events = [];
   return new Promise((resolve) => {
     let done = false, idleTimer = null;
@@ -205,7 +232,7 @@ function reqOnce(url, filterArr, opts = {}) {
       // Only keep events that actually match the REQ; a relay sending junk must
       // not pollute results or pagination. Still bump on any message — the relay
       // is alive and working, so don't let unmatched noise trip the idle timer.
-      onEvent: (ev) => { if (matchesAny(filterArr, ev)) events.push(ev); bump(); },
+      onEvent: (ev) => { if (match(ev)) events.push(ev); bump(); },
       onEose: finish,
       filters: filterArr, // kept so a NIP-42 auth-required REQ can be replayed
     });
@@ -355,13 +382,14 @@ export function subscribe(relays, filters, onEvent, opts = {}) {
   // stays open until unsubscribe and streams events as they arrive).
   const openLive = (liveFilters) => {
     const subId = nextSubId();
+    const match = compileMatcher(liveFilters); // compile once, reuse across relays + events
     for (const url of relays) {
       let ws;
       try { ws = connect(url); } catch { continue; }
       ws._subs.set(subId, {
         // Validate live events too: a relay must not push events that don't
         // match (incl. old events on a since=now live sub — only future ones).
-        onEvent: (ev) => { if (matchesAny(liveFilters, ev)) deliver(ev, url); },
+        onEvent: (ev) => { if (match(ev)) deliver(ev, url); },
         filters: liveFilters, // kept so a NIP-42 auth-required REQ can be replayed
       });
       whenOpen(ws).then(() => ws.send(JSON.stringify(['REQ', subId, ...liveFilters]))).catch(() => {});
