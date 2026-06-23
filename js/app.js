@@ -293,7 +293,7 @@ async function onSend(e) {
   if (busy) return;
   const text = $('#prompt').value.trim();
   if (!text) return;
-  if (!project.settings.apiKey) { openConnect(); setStatus('Connect Claude or Gemini to start.'); return; }
+  if (!project.settings.apiKey) { openConnect(); setStatus('Connect Claude, OpenAI, or Gemini to start.'); return; }
 
   $('#prompt').value = '';
   project.chat.push({ role: 'user', content: text });
@@ -441,6 +441,7 @@ function setConnectStatus(text, kind = '') {
 
 function openConnect() {
   $('#connect-open-anthropic').href = PROVIDERS.anthropic.consoleUrl;
+  $('#connect-open-openai').href = PROVIDERS.openai.consoleUrl;
   $('#connect-open-google').href = PROVIDERS.google.consoleUrl;
   $('#connect-apikey').value = project.settings.apiKey || '';
   $('#connect-disconnect').hidden = !project.settings.apiKey;
@@ -456,14 +457,15 @@ function reflectDetectedProvider() {
   if (!key) { setConnectStatus(''); return; }
   const provider = detectProvider(key);
   if (provider) setConnectStatus(`Detected a ${PROVIDERS[provider].label} key.`, 'ok');
-  else setConnectStatus('Unrecognized key — expected sk-ant-… (Claude) or AIza…/AQ.… (Gemini).', '');
+  else setConnectStatus('Unrecognized key — expected sk-ant-… (Claude), sk-… (OpenAI), or AIza…/AQ.… (Gemini).', '');
 }
 
 async function submitConnect() {
   const key = $('#connect-apikey').value.trim();
   const submit = $('#connect-submit');
   submit.disabled = true;
-  setConnectStatus('Verifying with Anthropic…', '');
+  const detected = detectProvider(key);
+  setConnectStatus(detected ? `Verifying with ${PROVIDERS[detected].label}…` : 'Verifying…', '');
   try {
     const { provider, models } = await verifyApiKey(key);
     project.settings.apiKey = key;
@@ -550,7 +552,7 @@ function init() {
     renderTabs(); renderActiveView(); renderChatHistory();
   });
 
-  if (!project.settings.apiKey) setStatus('Log in (top right) with a Claude or Gemini key to start, then ask Amy to build a view.');
+  if (!project.settings.apiKey) setStatus('Log in (top right) with a Claude, OpenAI, or Gemini key to start, then ask Amy to build a view.');
 }
 
 init();
