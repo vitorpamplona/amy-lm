@@ -315,31 +315,56 @@ function refreshThemeButton() {
   const btn = $('#btn-theme');
   if (!btn) return;
   const dark = theme.current() === 'dark';
-  // Show the icon for the mode you'd switch *to*.
-  btn.textContent = dark ? '☀' : '☾';
+  // Label the menu item with the mode you'd switch *to*.
+  btn.textContent = dark ? '☀  Light theme' : '☾  Dark theme';
   btn.title = dark ? 'Switch to light theme' : 'Switch to dark theme';
 }
 
 // ---------------------------------------------------------------------------
 // Signer + settings
 // ---------------------------------------------------------------------------
-async function refreshSignerStatus() {
-  const pill = $('#signer-status');
-  if (!nostr.signer.available()) { pill.textContent = 'no signer'; pill.classList.remove('ok'); return; }
-  pill.textContent = 'signer ready';
-  pill.classList.add('ok');
+function refreshSignerStatus() {
+  const item = $('#btn-connect-signer');
+  if (item && !nostr.signer.available()) item.textContent = 'Connect signer';
 }
 
 async function connectSigner() {
   if (!nostr.signer.available()) { setStatus('No NIP-07 extension found. Install e.g. Alby or nos2x.'); return; }
   try {
     const pk = await nostr.signer.getPublicKey();
-    const pill = $('#signer-status');
-    pill.textContent = nostr.nip19.npubEncode(pk).slice(0, 12) + '…';
-    pill.classList.add('ok');
+    $('#btn-connect-signer').textContent = 'Signer connected';
+    await loadUserProfile(pk);
   } catch (err) {
     setStatus('Signer connection denied.');
   }
+}
+
+// Show the user's avatar (kind 0 'picture') in the menu button. Falls back to
+// the placeholder silhouette if there's no picture or the image fails to load.
+function setAvatar(url, name) {
+  const img = $('#user-avatar');
+  const fallback = $('#user-avatar-fallback');
+  const btn = $('#user-menu-btn');
+  if (!img) return;
+  btn.classList.add('connected');
+  if (name) { btn.title = name; btn.setAttribute('aria-label', name); }
+  if (!url) return;
+  img.onload = () => { img.hidden = false; fallback.hidden = true; };
+  img.onerror = () => { img.hidden = true; fallback.hidden = false; };
+  img.src = url;
+}
+
+// Fetch the signed-in user's profile metadata (kind 0) and pull their picture.
+async function loadUserProfile(pubkey) {
+  try {
+    const events = await nostr.query(
+      project.settings.relays,
+      { kinds: [0], authors: [pubkey], limit: 1 },
+      { timeout: 4000 },
+    );
+    const meta = events[0] ? JSON.parse(events[0].content || '{}') : {};
+    setAvatar(meta.picture, meta.display_name || meta.name);
+  } catch { /* keep the placeholder avatar */ }
 }
 
 function openSettings() {
@@ -466,6 +491,17 @@ function init() {
   refreshThemeButton();
   $('#btn-theme').addEventListener('click', () => { theme.toggle(); refreshThemeButton(); });
   $('#btn-connect-signer').addEventListener('click', connectSigner);
+
+  // User menu dropdown (holds the nav actions, opened from the avatar).
+  const userBtn = $('#user-menu-btn');
+  const dropdown = $('#user-dropdown');
+  const closeMenu = () => { dropdown.hidden = true; userBtn.setAttribute('aria-expanded', 'false'); };
+  const openMenu = () => { dropdown.hidden = false; userBtn.setAttribute('aria-expanded', 'true'); };
+  userBtn.addEventListener('click', (e) => { e.stopPropagation(); dropdown.hidden ? openMenu() : closeMenu(); });
+  dropdown.addEventListener('click', (e) => { if (e.target.closest('.menu-item')) closeMenu(); });
+  document.addEventListener('click', (e) => { if (!e.target.closest('.user-menu')) closeMenu(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+
   $('#btn-settings').addEventListener('click', openSettings);
   $('#settings-dialog').addEventListener('close', () => {
     if ($('#settings-dialog').returnValue === 'save') saveSettingsFromForm();

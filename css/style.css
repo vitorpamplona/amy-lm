@@ -127,6 +127,62 @@ button, .pill, .tab, input, textarea, dialog, .msg .bubble {
 .top-actions { display: flex; align-items: center; gap: 8px; }
 
 /* ---------------------------------------------------------------------------
+   User menu (avatar button + dropdown)
+--------------------------------------------------------------------------- */
+.user-menu { position: relative; display: flex; }
+
+.avatar-btn {
+  padding: 0;
+  width: 36px; height: 36px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  display: grid; place-items: center;
+  overflow: hidden;
+  box-shadow: none;
+}
+.avatar-btn:hover { background: var(--panel-3); transform: none; filter: none; }
+.avatar-btn:focus-visible { outline: none; box-shadow: var(--ring); }
+.avatar-btn.connected { border-color: color-mix(in srgb, var(--ok) 55%, var(--border)); }
+#user-avatar { width: 100%; height: 100%; object-fit: cover; display: block; }
+.avatar-fallback { width: 20px; height: 20px; fill: currentColor; }
+
+.dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 190px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 20;
+  animation: pop .14s ease;
+}
+.dropdown[hidden] { display: none; }
+
+.menu-item {
+  text-align: left;
+  width: 100%;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  font-weight: 500;
+  box-shadow: none;
+}
+.menu-item:hover { background: var(--panel-2); transform: none; filter: none; }
+.menu-item:focus-visible { outline: none; box-shadow: var(--ring); }
+.menu-item.danger { color: var(--danger); }
+.menu-item.danger:hover { background: color-mix(in srgb, var(--danger) 12%, var(--panel-2)); }
+
+/* ---------------------------------------------------------------------------
    Buttons
 --------------------------------------------------------------------------- */
 button {
