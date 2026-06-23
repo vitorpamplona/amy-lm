@@ -11,6 +11,11 @@ const DEFAULTS = {
     provider: '', // 'anthropic' | 'openai' | 'google'; set when a key is connected
     model: 'claude-opus-4-8',
     relays: ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band'],
+    // Remembered NIP-07 identity so a returning nostr user is recognized
+    // without reconnecting. pubkey is hex; profile caches { name, picture } so
+    // the avatar can paint instantly on load before the network responds.
+    pubkey: '',
+    profile: null,
   },
   // Each view: { id, title, code, createdAt }
   views: [],

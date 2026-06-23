@@ -430,11 +430,12 @@ dialog[open] { animation: pop .18s ease; }
 .muted { color: var(--muted); }
 .muted.ok, .connect-status.ok { color: var(--ok); }
 
-/* Log in with Claude dialog */
-#connect-form { padding: 22px; display: flex; flex-direction: column; gap: 16px; }
-#connect-form h3 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
-#connect-form .muted { font-size: 13px; line-height: 1.55; margin: 0; }
-#connect-form code {
+/* Log in with Claude dialog + Connect signer dialog (shared layout) */
+#connect-form, #signer-form { padding: 22px; display: flex; flex-direction: column; gap: 16px; }
+#connect-form h3, #signer-form h3 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
+#connect-form .muted, #signer-form .muted { font-size: 13px; line-height: 1.55; margin: 0; }
+#signer-form .steps { margin-top: 4px; }
+#connect-form code, #signer-form code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   background: var(--panel-2);
   border: 1px solid var(--border);
@@ -464,8 +465,8 @@ dialog[open] { animation: pop .18s ease; }
 .console-links { display: flex; flex-wrap: wrap; gap: 16px; }
 .connect-status { min-height: 18px; font-size: 13px; color: var(--muted); }
 .connect-status.error { color: var(--danger); }
-#connect-form menu { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; padding: 0; }
-#connect-form menu .spacer { flex: 1 1 auto; }
+#connect-form menu, #signer-form menu { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; padding: 0; }
+#connect-form menu .spacer, #signer-form menu .spacer { flex: 1 1 auto; }
 
 /* ---------------------------------------------------------------------------
    Animations & responsive

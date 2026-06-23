@@ -211,8 +211,10 @@ async function dispatch(name, input) {
       return JSON.stringify({ count: events.length, events: trimmed });
     }
     case 'get_context': {
-      let pubkey = null;
-      try { if (nostr.signer.available()) pubkey = await nostr.signer.getPublicKey(); } catch {}
+      // Prefer the remembered identity (no extension prompt); fall back to the
+      // live signer if nothing is stored yet.
+      let pubkey = project.settings.pubkey || null;
+      if (!pubkey) { try { if (nostr.signer.available()) pubkey = await nostr.signer.getPublicKey(); } catch {} }
       return JSON.stringify({ pubkey, npub: pubkey ? nostr.nip19.npubEncode(pubkey) : null, relays: project.settings.relays });
     }
     default:
@@ -398,18 +400,121 @@ function refreshThemeButton() {
 // ---------------------------------------------------------------------------
 function refreshSignerStatus() {
   const item = $('#btn-connect-signer');
-  if (item && !nostr.signer.available()) item.textContent = 'Connect signer';
+  if (!item) return;
+  // A remembered identity (persisted pubkey) keeps the user "connected" across
+  // reloads, even before the extension is queried again.
+  item.textContent = project.settings.pubkey ? 'Disconnect signer' : 'Connect signer';
 }
 
-async function connectSigner() {
-  if (!nostr.signer.available()) { setStatus('No NIP-07 extension found. Install e.g. Alby or nos2x.'); return; }
+// Menu entry: when connected it disconnects; otherwise it opens the guided
+// dialog, which both authorizes an existing extension AND walks users who
+// don't have a signer yet through installing one.
+function onSignerMenu() {
+  if (project.settings.pubkey) { disconnectSigner(); return; }
+  openSignerDialog();
+}
+
+function setSignerStatus(text, kind = '') {
+  const el = $('#signer-status');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'connect-status' + (kind ? ' ' + kind : '');
+}
+
+// Adapt the dialog to whether a NIP-07 extension is present right now: existing
+// users get a one-click Connect; users without one get install guidance + Retry.
+function refreshSignerDialog() {
+  const present = nostr.signer.available();
+  $('#signer-present').hidden = !present;
+  $('#signer-absent').hidden = present;
+  $('#signer-action').textContent = present ? 'Connect' : 'Retry';
+  setSignerStatus('');
+}
+
+function openSignerDialog() {
+  refreshSignerDialog();
+  $('#signer-dialog').showModal();
+}
+
+async function signerAction() {
+  // No extension yet: this is the "Retry" path — re-check after they install one.
+  if (!nostr.signer.available()) {
+    refreshSignerDialog();
+    if (!nostr.signer.available()) {
+      setSignerStatus('Still no signer detected. Make sure the extension is installed and enabled, then retry. You may need to reload the page.', 'error');
+    }
+    return;
+  }
+  const action = $('#signer-action');
+  action.disabled = true;
+  setSignerStatus('Waiting for the extension to authorize…');
   try {
     const pk = await nostr.signer.getPublicKey();
-    $('#btn-connect-signer').textContent = 'Signer connected';
+    project.settings.pubkey = pk;
+    persist();
+    refreshSignerStatus();
+    setSignerStatus('Connected! Importing your relays and profile…', 'ok');
+    // Pull the user's own relays so the outbox model routes through their real
+    // network with no manual relay setup, then show their profile.
+    await importUserRelays(pk);
     await loadUserProfile(pk);
+    setStatus('');
+    setTimeout(() => $('#signer-dialog').close(), 700);
   } catch (err) {
-    setStatus('Signer connection denied.');
+    setSignerStatus('Authorization was denied. Approve the request in your extension and retry.', 'error');
+  } finally {
+    action.disabled = false;
   }
+}
+
+// On load, recognize a returning nostr user from their remembered pubkey:
+// paint the cached avatar at once, then refresh the profile in the background.
+// No extension prompt is triggered — we already trust the stored pubkey.
+function restoreSigner() {
+  const pk = project.settings.pubkey;
+  if (!pk) return;
+  const cached = project.settings.profile;
+  if (cached) setAvatar(cached.picture, cached.name);
+  else setAvatar('', '');
+  loadUserProfile(pk);
+}
+
+// After login, point the user toward connecting a Nostr identity. If an
+// extension is already present we invite a one-click connect; if not (e.g. a
+// user new to Nostr) we point them at the guided setup that suggests Alby.
+function nudgeConnectSigner() {
+  if (project.settings.pubkey) return;
+  if (nostr.signer.available()) {
+    setStatus('Nostr extension detected — open the menu (top right) and “Connect signer” to use your identity.');
+  } else {
+    setStatus('New to Nostr? Open the menu (top right) → “Connect signer” to set up a signer extension (we suggest Alby).');
+  }
+}
+
+function disconnectSigner() {
+  project.settings.pubkey = '';
+  project.settings.profile = null;
+  persist();
+  refreshSignerStatus();
+  clearAvatar();
+}
+
+// Merge the user's own NIP-65 (kind 10002) read/write relays into the discovery
+// seeds so per-author outbox routing starts from where they actually publish.
+// De-duplicated; existing seeds are kept as a fallback.
+async function importUserRelays(pubkey) {
+  try {
+    const list = await nostr.relayListFor(pubkey, project.settings.relays, { timeout: 4000 });
+    const merged = [...list.write, ...list.read, ...project.settings.relays]
+      .map((u) => u.trim()).filter(Boolean);
+    const deduped = [...new Set(merged)];
+    if (deduped.length === project.settings.relays.length
+        && deduped.every((u, i) => u === project.settings.relays[i])) return; // nothing new
+    project.settings.relays = deduped;
+    persist();
+    resetPanes();        // re-mount views against the user's relays
+    renderActiveView();
+  } catch { /* keep the default seeds */ }
 }
 
 // Show the user's avatar (kind 0 'picture') in the menu button. Falls back to
@@ -428,7 +533,19 @@ function setAvatar(url, name) {
   img.src = url;
 }
 
+// Reset the menu button back to the anonymous placeholder silhouette.
+function clearAvatar() {
+  const img = $('#user-avatar');
+  const btn = $('#user-menu-btn');
+  if (!btn) return;
+  btn.classList.remove('connected', 'has-img');
+  btn.removeAttribute('title');
+  btn.setAttribute('aria-label', 'Open menu');
+  if (img) img.removeAttribute('src');
+}
+
 // Fetch the signed-in user's profile metadata (kind 0) and pull their picture.
+// The result is cached in settings so the avatar paints instantly next load.
 async function loadUserProfile(pubkey) {
   try {
     const events = await nostr.outboxQuery(
@@ -437,7 +554,10 @@ async function loadUserProfile(pubkey) {
       { timeout: 4000 },
     );
     const meta = events[0] ? JSON.parse(events[0].content || '{}') : {};
-    setAvatar(meta.picture, meta.display_name || meta.name);
+    const profile = { picture: meta.picture || '', name: meta.display_name || meta.name || '' };
+    project.settings.profile = profile;
+    persist();
+    setAvatar(profile.picture, profile.name);
   } catch { /* keep the placeholder avatar */ }
 }
 
@@ -532,6 +652,7 @@ async function submitConnect() {
     refreshClaudeStatus();
     setConnectStatus(`Connected to ${PROVIDERS[provider].label}! You can close this and start chatting.`, 'ok');
     setStatus('');
+    nudgeConnectSigner();
     setTimeout(() => $('#connect-dialog').close(), 700);
   } catch (err) {
     setConnectStatus(err.message || String(err), 'error');
@@ -559,6 +680,7 @@ function init() {
   renderActiveView();
   renderChatHistory();
   refreshSignerStatus();
+  restoreSigner();
   refreshClaudeStatus();
 
   $('#composer').addEventListener('submit', onSend);
@@ -567,7 +689,7 @@ function init() {
   });
   refreshThemeButton();
   $('#btn-theme').addEventListener('click', () => { theme.toggle(); refreshThemeButton(); });
-  $('#btn-connect-signer').addEventListener('click', connectSigner);
+  $('#btn-connect-signer').addEventListener('click', onSignerMenu);
 
   // User menu dropdown (holds the nav actions, opened from the avatar).
   const userBtn = $('#user-menu-btn');
@@ -590,6 +712,10 @@ function init() {
   $('#connect-submit').addEventListener('click', submitConnect);
   $('#connect-cancel').addEventListener('click', () => $('#connect-dialog').close());
   $('#connect-disconnect').addEventListener('click', disconnectClaude);
+
+  // Connect signer (guided)
+  $('#signer-action').addEventListener('click', signerAction);
+  $('#signer-cancel').addEventListener('click', () => $('#signer-dialog').close());
   $('#connect-apikey').addEventListener('input', reflectDetectedProvider);
   $('#connect-apikey').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); submitConnect(); }
@@ -600,11 +726,17 @@ function init() {
     project = store.load();
     activeViewId = null;
     resetPanes();
+    clearAvatar();
+    refreshSignerStatus();
     $('#project-name').textContent = project.name;
     renderTabs(); renderActiveView(); renderChatHistory();
   });
 
-  if (!project.settings.apiKey) setStatus('Log in (top right) with a Claude, OpenAI, or Gemini key to start, then ask Amy to build a view.');
+  if (!project.settings.apiKey) {
+    setStatus('Log in (top right) with a Claude, OpenAI, or Gemini key to start, then ask Amy to build a view.');
+  } else {
+    nudgeConnectSigner();
+  }
 }
 
 init();
