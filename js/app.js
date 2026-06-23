@@ -427,6 +427,7 @@ async function onSend(e) {
   if (!isConnected()) { openConnect(); setStatus('Connect an LLM to start.'); return; }
 
   $('#prompt').value = '';
+  autoGrowPrompt();
   project.chat.push({ role: 'user', content: text });
   addMessageEl('user', text);
   compactHistory();
@@ -462,6 +463,15 @@ async function onSend(e) {
 }
 
 function setStatus(t) { $('#chat-status').textContent = t; }
+
+// Resize the prompt textarea to fit its content. The CSS max-height caps the
+// growth and switches the box to scrolling once that limit is reached.
+function autoGrowPrompt() {
+  const el = $('#prompt');
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = `${el.scrollHeight}px`;
+}
 
 // Start a fresh conversation: empties the transcript that's replayed to the LLM
 // each turn (it accumulates and inflates every request), while keeping views,
@@ -850,6 +860,8 @@ function init() {
     // Enter sends; Shift+Enter inserts a newline.
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(e); }
   });
+  // Grow the composer with its content, up to the CSS max-height.
+  $('#prompt').addEventListener('input', autoGrowPrompt);
   refreshThemeButton();
   $('#btn-theme').addEventListener('click', () => { theme.toggle(); refreshThemeButton(); });
   $('#btn-connect-signer').addEventListener('click', onSignerMenu);
