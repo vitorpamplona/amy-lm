@@ -61,11 +61,14 @@ To create or update an interface, call save_view with a 'code' string. The code 
 - 'root' is a fresh <div> you populate with DOM.
 - 'api' provides everything you need. DO NOT import anything; only use 'api', 'root', and standard browser globals.
 
-## Relays: use the outbox model (NIP-65) by default
-Nostr has no central server — each user reads and writes on THEIR OWN relays. The right way to find someone's events is to fetch them from the relays that user publishes to (their "write"/outbox relays), NOT from one fixed relay list. api.query/api.subscribe/api.publish already do this for you: they look up each author's NIP-65 relay list and route per-author automatically. So the rule is: just give filters with 'authors' and let the api route — do NOT collect, hardcode, or pass relay URLs around. api.relays is only a small set of discovery/seed relays used to bootstrap those lookups and as a fallback for users who have no relay list anywhere; do not treat it as "the relays for everything." Only reach for api.queryAt/api.subscribeAt/api.publishAt (explicit relays) when a view genuinely needs a specific fixed relay, e.g. a single-relay browser.
+## Relays: the outbox model comes first, the fixed list is a last resort
+Nostr has no central server — each user reads and writes on THEIR OWN relays. So to find someone's events you go to the relays THAT USER chose, never to one fixed relay list. Decide WHERE to read or write in this priority order:
 
-IMPORTANT: relay lists are per-NIP. NIP-65 (kind 10002) is the GENERAL outbox for ordinary events (notes, reactions, profiles), and it is what api.query/subscribe/publish use — but it is NOT universal. Many features keep their own relay list under their own replaceable kind, e.g. 10050 = NIP-17 DM relays, 10007 = search relays, 10063 = blossom media servers, plus NIP-51 relay sets. When you build a feature governed by one of those NIPs, do NOT assume the NIP-65 outbox is the right place — read_nip to confirm which relay-list kind that feature uses, resolve it per-user with api.relaysFromList(pubkey, kind) (or api.relayListFor for the markered NIP-65 list), and then talk to those relays via api.queryAt/subscribeAt/publishAt. Example: to send a DM you fetch the recipient's kind 10050 list and publish there, not to their outbox.
+1. The outbox model (the DEFAULT and almost always the right answer). "Outbox" means routing each author to their own relay list for the kind of thing you want — and that list is per-NIP: NIP-65 (kind 10002) is the GENERAL outbox for ordinary events (notes, reactions, profiles, contacts), while other features keep their own replaceable-kind relay list, e.g. 10050 = NIP-17 DM relays, 10007 = search relays, 10063 = blossom media servers, plus NIP-51 relay sets. api.query/api.subscribe/api.publish/api.count already do NIP-65 routing for you: just give filters with 'authors' and let them route — do NOT collect, hardcode, or pass relay URLs around. For a feature governed by another NIP, read_nip to confirm which relay-list kind it uses, resolve it per-user with api.relaysFromList(pubkey, kind) (or api.relayListFor for the markered NIP-65 list), then talk to those relays with api.queryAt/subscribeAt/publishAt. Example: to send a DM, publish to the recipient's kind 10050 relays, not their NIP-65 outbox.
 
+2. Relay hints from tags, when you need to FIND a specific referenced event. e/a/p tags carry an optional relay hint in their THIRD element (e.g. ["e", <id>, <relay-hint>], ["a", <addr>, <relay-hint>], ["p", <pubkey>, <relay-hint>]). When you are chasing a referenced note, addressable event, or author and the outbox lookup comes up empty, use that hint with api.queryAt/subscribeAt to fetch it from where the author said it lives.
+
+3. The fixed seed/discovery list (api.relays) — a LAST RESORT only. It exists to bootstrap the outbox lookups above and to serve users who have NO relay list anywhere. Do NOT treat it as "the relays for everything" and do not query it directly when an outbox list or a relay hint is available. Only reach for api.queryAt/subscribeAt/publishAt against explicit relays when a view genuinely needs a specific fixed relay (e.g. a single-relay browser).
 
 Some relays require the user to be logged in (NIP-42 auth) before they return anything; the api authenticates automatically when a signer is connected, so if a query that should return data comes back empty, check api.signer.available() and prompt the user to connect their signer rather than showing a blank result.
 
@@ -240,7 +243,11 @@ function renderTabs() {
     x.className = 'x';
     x.textContent = '×';
     x.title = 'Delete view';
-    x.onclick = (e) => { e.stopPropagation(); dispatch('delete_view', { id: v.id }); };
+    x.onclick = (e) => {
+      e.stopPropagation();
+      if (!confirm(`Close the view "${v.title}"? This cannot be undone.`)) return;
+      dispatch('delete_view', { id: v.id });
+    };
     tab.append(label, x);
     tabs.append(tab);
   }
@@ -700,7 +707,8 @@ function init() {
 
   $('#composer').addEventListener('submit', onSend);
   $('#prompt').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSend(e); }
+    // Enter sends; Shift+Enter inserts a newline.
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(e); }
   });
   refreshThemeButton();
   $('#btn-theme').addEventListener('click', () => { theme.toggle(); refreshThemeButton(); });
