@@ -383,6 +383,19 @@ async function onSend(e) {
 
 function setStatus(t) { $('#chat-status').textContent = t; }
 
+// Start a fresh conversation: empties the transcript that's replayed to the LLM
+// each turn (it accumulates and inflates every request), while keeping views,
+// settings, and the signer. Safe because views live in project.views and the
+// model re-reads their code with read_view rather than trusting chat history.
+function clearChat() {
+  if (busy) return;
+  if (!project.chat.length) { setStatus('Chat is already empty.'); return; }
+  project.chat = [];
+  persist();
+  renderChatHistory();
+  setStatus('Started a fresh chat. Your views are kept.');
+}
+
 // ---------------------------------------------------------------------------
 // Theme
 // ---------------------------------------------------------------------------
@@ -720,6 +733,7 @@ function init() {
   $('#connect-apikey').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); submitConnect(); }
   });
+  $('#btn-clear-chat').addEventListener('click', clearChat);
   $('#btn-reset').addEventListener('click', () => {
     if (!confirm('Wipe this local project (views, chat, settings)? This cannot be undone.')) return;
     store.reset();
