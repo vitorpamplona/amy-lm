@@ -385,6 +385,8 @@ button:disabled { opacity: .5; cursor: not-allowed; transform: none; filter: non
   padding: 10px 12px;
   font: inherit;
   line-height: 1.45;
+  max-height: 240px;
+  overflow-y: auto;
 }
 #composer textarea::placeholder { color: var(--muted); }
 #composer textarea:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
