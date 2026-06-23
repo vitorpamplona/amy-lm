@@ -6,7 +6,7 @@
 // (CORS), so a verified key is genuinely usable for chatting straight away.
 //
 // The provider is detected from the key's shape: Anthropic keys start with
-// "sk-ant-", Google AI Studio keys with "AIza".
+// "sk-ant-", Google AI Studio keys with "AIza" (legacy) or "AQ." (current).
 
 // Per-provider connection metadata (labels, defaults, where to make a key).
 export const PROVIDERS = {
@@ -20,7 +20,7 @@ export const PROVIDERS = {
   google: {
     label: 'Gemini',
     defaultModel: 'gemini-2.5-pro',
-    keyHint: 'AIza…',
+    keyHint: 'AIza…/AQ.…',
     consoleUrl: 'https://aistudio.google.com/apikey',
     consoleLabel: 'Google AI Studio',
   },
@@ -38,7 +38,8 @@ const GEMINI_MODELS = 'https://generativelanguage.googleapis.com/v1beta/models';
 export function detectProvider(apiKey) {
   const key = (apiKey || '').trim();
   if (key.startsWith('sk-ant-')) return 'anthropic';
-  if (key.startsWith('AIza')) return 'google';
+  // Google AI Studio keys: "AIza…" (legacy) and "AQ.…" (current format).
+  if (key.startsWith('AIza') || key.startsWith('AQ.')) return 'google';
   return null;
 }
 
@@ -55,7 +56,7 @@ export async function verifyApiKey(apiKey) {
   if (!key) throw new Error('Paste your API key first.');
   const provider = detectProvider(key);
   if (!provider) {
-    throw new Error('That key isn’t recognized. Use a Claude key (starts with "sk-ant-") or a Gemini key (starts with "AIza").');
+    throw new Error('That key isn’t recognized. Use a Claude key (starts with "sk-ant-") or a Gemini key (starts with "AIza" or "AQ.").');
   }
   return provider === 'anthropic' ? verifyAnthropic(key) : verifyGoogle(key);
 }
