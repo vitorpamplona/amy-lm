@@ -62,7 +62,7 @@ python3 -m http.server 8000
 | `js/app.js`      | Orchestration, project state, the system prompt, and the model's tools.|
 | `js/auth.js`     | Detects the provider from a pasted key and verifies it live.          |
 | `js/llm.js`      | Claude, OpenAI **and** Gemini API client + the shared tool-use loop.   |
-| `js/nostr.js`    | Relay pool (query/subscribe/publish), NIP-07 signer, NIP-19 bech32.   |
+| `js/nostr.js`    | Relay pool (query/subscribe/publish/count), NIP-42 relay AUTH, NIP-45 counts, NIP-07 signer, NIP-19 bech32. |
 | `js/views.js`    | Runtime that executes a generated view into the page with an `api`.   |
 | `js/storage.js`  | Persists the whole project to `localStorage`.                         |
 | `js/theme.js`    | Light/dark theme preference (persisted separately, survives reset).   |
@@ -78,8 +78,8 @@ python3 -m http.server 8000
 ### The view contract
 
 Each view is JavaScript executed as `render(root, api)`. `root` is a fresh
-element to populate; `api` exposes `query`, `subscribe`, `publish`, `signer`,
-`nip19`, a tiny `el()` DOM helper, `timeAgo()`, and per-view `getState`/
+element to populate; `api` exposes `query`, `subscribe`, `publish`, `count`,
+`signer`, `nip19`, a tiny `el()` DOM helper, `timeAgo()`, and per-view `getState`/
 `setState`. A view may return an unsubscribe function for live feeds, which
 Amy calls when the view is closed.
 

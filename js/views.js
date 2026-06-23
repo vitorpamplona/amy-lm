@@ -57,6 +57,9 @@ function makeApi(ctx) {
     query: (filters, opts) => nostr.outboxQuery(seeds, filters, opts),
     subscribe: (filters, onEvent, opts) => nostr.outboxSubscribe(seeds, filters, onEvent, opts),
     publish: (draft, opts) => nostr.outboxPublish(seeds, draft, opts),
+    // NIP-45 COUNT -> Promise<number>. Approximate, per-relay (not additive);
+    // not every relay supports it. Outbox-routed like query.
+    count: (filters, opts) => nostr.outboxCount(seeds, filters, opts),
     // Resolve a user's NIP-65 outbox relay list -> { read, write } (cached).
     relayListFor: (pubkey, opts) => nostr.relayListFor(pubkey, seeds, opts),
     // Resolve any other per-NIP relay list -> string[] (cached). e.g. kind
@@ -67,6 +70,7 @@ function makeApi(ctx) {
     queryAt: (relays, filters, opts) => nostr.query(relays, filters, opts),
     subscribeAt: (relays, filters, onEvent, opts) => nostr.subscribe(relays, filters, onEvent, opts),
     publishAt: (relays, draft) => nostr.publish(relays, draft),
+    countAt: (relays, filters, opts) => nostr.count(relays, filters, opts),
     // tiny dom + format helpers
     el,
     timeAgo,
