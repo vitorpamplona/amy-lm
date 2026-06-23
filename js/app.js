@@ -207,8 +207,10 @@ async function dispatch(name, input) {
       return JSON.stringify({ count: events.length, events: trimmed });
     }
     case 'get_context': {
-      let pubkey = null;
-      try { if (nostr.signer.available()) pubkey = await nostr.signer.getPublicKey(); } catch {}
+      // Prefer the remembered identity (no extension prompt); fall back to the
+      // live signer if nothing is stored yet.
+      let pubkey = project.settings.pubkey || null;
+      if (!pubkey) { try { if (nostr.signer.available()) pubkey = await nostr.signer.getPublicKey(); } catch {} }
       return JSON.stringify({ pubkey, npub: pubkey ? nostr.nip19.npubEncode(pubkey) : null, relays: project.settings.relays });
     }
     default:
@@ -394,18 +396,75 @@ function refreshThemeButton() {
 // ---------------------------------------------------------------------------
 function refreshSignerStatus() {
   const item = $('#btn-connect-signer');
-  if (item && !nostr.signer.available()) item.textContent = 'Connect signer';
+  if (!item) return;
+  // A remembered identity (persisted pubkey) keeps the user "connected" across
+  // reloads, even before the extension is queried again.
+  item.textContent = project.settings.pubkey ? 'Disconnect signer' : 'Connect signer';
 }
 
 async function connectSigner() {
+  // Already connected -> the menu item acts as a disconnect.
+  if (project.settings.pubkey) { disconnectSigner(); return; }
   if (!nostr.signer.available()) { setStatus('No NIP-07 extension found. Install e.g. Alby or nos2x.'); return; }
   try {
     const pk = await nostr.signer.getPublicKey();
-    $('#btn-connect-signer').textContent = 'Signer connected';
+    project.settings.pubkey = pk;
+    persist();
+    refreshSignerStatus();
+    // Pull the user's own relays so the outbox model routes through their real
+    // network with no manual relay setup, then show their profile.
+    await importUserRelays(pk);
     await loadUserProfile(pk);
+    setStatus('');
   } catch (err) {
     setStatus('Signer connection denied.');
   }
+}
+
+// On load, recognize a returning nostr user from their remembered pubkey:
+// paint the cached avatar at once, then refresh the profile in the background.
+// No extension prompt is triggered — we already trust the stored pubkey.
+function restoreSigner() {
+  const pk = project.settings.pubkey;
+  if (!pk) return;
+  const cached = project.settings.profile;
+  if (cached) setAvatar(cached.picture, cached.name);
+  else setAvatar('', '');
+  loadUserProfile(pk);
+}
+
+// Existing nostr users have a NIP-07 extension — if one is present but not yet
+// connected, invite them to link it (one click in the menu) so views can read
+// their pubkey and publish on their behalf.
+function nudgeConnectSigner() {
+  if (project.settings.pubkey || !nostr.signer.available()) return;
+  setStatus('Nostr extension detected — open the menu (top right) and “Connect signer” to use your identity.');
+}
+
+function disconnectSigner() {
+  project.settings.pubkey = '';
+  project.settings.profile = null;
+  persist();
+  refreshSignerStatus();
+  clearAvatar();
+}
+
+// Merge the user's own NIP-65 (kind 10002) read/write relays into the discovery
+// seeds so per-author outbox routing starts from where they actually publish.
+// De-duplicated; existing seeds are kept as a fallback.
+async function importUserRelays(pubkey) {
+  try {
+    const list = await nostr.relayListFor(pubkey, project.settings.relays, { timeout: 4000 });
+    const merged = [...list.write, ...list.read, ...project.settings.relays]
+      .map((u) => u.trim()).filter(Boolean);
+    const deduped = [...new Set(merged)];
+    if (deduped.length === project.settings.relays.length
+        && deduped.every((u, i) => u === project.settings.relays[i])) return; // nothing new
+    project.settings.relays = deduped;
+    persist();
+    resetPanes();        // re-mount views against the user's relays
+    renderActiveView();
+  } catch { /* keep the default seeds */ }
 }
 
 // Show the user's avatar (kind 0 'picture') in the menu button. Falls back to
@@ -424,7 +483,19 @@ function setAvatar(url, name) {
   img.src = url;
 }
 
+// Reset the menu button back to the anonymous placeholder silhouette.
+function clearAvatar() {
+  const img = $('#user-avatar');
+  const btn = $('#user-menu-btn');
+  if (!btn) return;
+  btn.classList.remove('connected', 'has-img');
+  btn.removeAttribute('title');
+  btn.setAttribute('aria-label', 'Open menu');
+  if (img) img.removeAttribute('src');
+}
+
 // Fetch the signed-in user's profile metadata (kind 0) and pull their picture.
+// The result is cached in settings so the avatar paints instantly next load.
 async function loadUserProfile(pubkey) {
   try {
     const events = await nostr.outboxQuery(
@@ -433,7 +504,10 @@ async function loadUserProfile(pubkey) {
       { timeout: 4000 },
     );
     const meta = events[0] ? JSON.parse(events[0].content || '{}') : {};
-    setAvatar(meta.picture, meta.display_name || meta.name);
+    const profile = { picture: meta.picture || '', name: meta.display_name || meta.name || '' };
+    project.settings.profile = profile;
+    persist();
+    setAvatar(profile.picture, profile.name);
   } catch { /* keep the placeholder avatar */ }
 }
 
@@ -528,6 +602,7 @@ async function submitConnect() {
     refreshClaudeStatus();
     setConnectStatus(`Connected to ${PROVIDERS[provider].label}! You can close this and start chatting.`, 'ok');
     setStatus('');
+    nudgeConnectSigner();
     setTimeout(() => $('#connect-dialog').close(), 700);
   } catch (err) {
     setConnectStatus(err.message || String(err), 'error');
@@ -555,6 +630,7 @@ function init() {
   renderActiveView();
   renderChatHistory();
   refreshSignerStatus();
+  restoreSigner();
   refreshClaudeStatus();
 
   $('#composer').addEventListener('submit', onSend);
@@ -596,11 +672,17 @@ function init() {
     project = store.load();
     activeViewId = null;
     resetPanes();
+    clearAvatar();
+    refreshSignerStatus();
     $('#project-name').textContent = project.name;
     renderTabs(); renderActiveView(); renderChatHistory();
   });
 
-  if (!project.settings.apiKey) setStatus('Log in (top right) with a Claude, OpenAI, or Gemini key to start, then ask Amy to build a view.');
+  if (!project.settings.apiKey) {
+    setStatus('Log in (top right) with a Claude, OpenAI, or Gemini key to start, then ask Amy to build a view.');
+  } else {
+    nudgeConnectSigner();
+  }
 }
 
 init();
