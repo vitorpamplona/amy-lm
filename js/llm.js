@@ -1,18 +1,21 @@
-// llm.js — talks to the chosen LLM (Anthropic Claude, OpenAI, or Google Gemini)
-// directly from the browser and runs the tool-use loop that lets the model build
-// the client.
+// llm.js — talks to the chosen LLM (Anthropic Claude, OpenAI, Google Gemini, or
+// any OpenAI-compatible endpoint) directly from the browser and runs the
+// tool-use loop that lets the model build the client.
 //
 // No server: requests go straight to the provider's API using the user's own
-// key (stored locally). All three providers allow direct browser access via
+// key (stored locally). All built-in providers allow direct browser access via
 // CORS — Anthropic needs the direct-browser-access opt-in header; OpenAI and
-// Gemini do not.
+// Gemini do not. An OpenAI-compatible endpoint (Ollama, LM Studio, OpenRouter,
+// Groq, Together, …) reuses the OpenAI request/translation path against a
+// user-supplied base URL; whether it works from the browser depends on that
+// server's CORS policy (local servers generally allow it).
 //
 // The conversation is stored in one canonical (Anthropic-shaped) message format
 // in app/storage; the OpenAI and Gemini paths translate that to/from their
 // respective shapes on the way in and out, so the rest of the app never has to
 // branch.
 
-import { detectProvider } from './auth.js';
+import { detectProvider, normalizeBaseUrl } from './auth.js';
 
 const ANTHROPIC_ENDPOINT = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -26,7 +29,8 @@ const MAX_STEPS = 16; // safety valve against runaway tool loops
  *
  * @param {object} args
  * @param {string} args.apiKey
- * @param {string} [args.provider] - 'anthropic' | 'openai' | 'google'; inferred from the key if omitted
+ * @param {string} [args.provider] - 'anthropic' | 'openai' | 'google' | 'openai-compatible'; inferred from the key/baseUrl if omitted
+ * @param {string} [args.baseUrl] - base URL of an OpenAI-compatible endpoint; when set, the OpenAI path is used against it
  * @param {string} args.model
  * @param {string} args.system
  * @param {Array}  args.messages - existing history (will be appended to in place)
@@ -37,8 +41,13 @@ const MAX_STEPS = 16; // safety valve against runaway tool loops
  * @returns {Promise<Array>} the updated messages array
  */
 export async function converse(args) {
+  const provider = args.provider || detectProvider(args.apiKey, args.baseUrl);
+  if (provider === 'openai-compatible') {
+    const base = normalizeBaseUrl(args.baseUrl);
+    if (!base) throw new Error('No base URL set — open Settings to point Amy at your OpenAI-compatible endpoint.');
+    return converseOpenAI({ ...args, endpoint: `${base}/chat/completions` });
+  }
   if (!args.apiKey) throw new Error('No API key set — open Settings to connect Claude, OpenAI, or Gemini.');
-  const provider = args.provider || detectProvider(args.apiKey);
   if (provider === 'google') return converseGemini(args);
   if (provider === 'openai') return converseOpenAI(args);
   return converseAnthropic(args);
@@ -95,10 +104,14 @@ async function converseAnthropic({ apiKey, model, system, messages, tools, dispa
 // ---------------------------------------------------------------------------
 // OpenAI
 // ---------------------------------------------------------------------------
-async function callOpenAI({ apiKey, model, messages, tools }) {
-  const res = await fetch(OPENAI_ENDPOINT, {
+// `endpoint` defaults to OpenAI's; an OpenAI-compatible provider passes its own.
+// The key is sent as a Bearer token only when present (local servers may need none).
+async function callOpenAI({ apiKey, model, messages, tools, endpoint }) {
+  const headers = { 'content-type': 'application/json' };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  const res = await fetch(endpoint || OPENAI_ENDPOINT, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    headers,
     body: JSON.stringify({
       model: model || 'gpt-5',
       max_completion_tokens: 16000,
@@ -114,11 +127,11 @@ async function callOpenAI({ apiKey, model, messages, tools }) {
   return res.json();
 }
 
-async function converseOpenAI({ apiKey, model, system, messages, tools, dispatch, onText, onToolUse }) {
+async function converseOpenAI({ apiKey, model, system, messages, tools, dispatch, onText, onToolUse, endpoint }) {
   const openaiTools = toOpenAITools(tools);
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    const data = await callOpenAI({ apiKey, model, messages: toOpenAIMessages(system, messages), tools: openaiTools });
+    const data = await callOpenAI({ apiKey, model, messages: toOpenAIMessages(system, messages), tools: openaiTools, endpoint });
     const msg = data.choices?.[0]?.message || {};
 
     // Translate the OpenAI message back into canonical (Anthropic-shaped) blocks

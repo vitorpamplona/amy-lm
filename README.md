@@ -8,7 +8,9 @@ Amy is a concept for a [Nostr](https://nostr.com) client with an LLM chat
    nos2x, …) to sign and publish.
 3. **How to reach an LLM** — it calls **Claude (Anthropic)**, **OpenAI**, or
    **Gemini (Google)** directly from the browser using your own key. Paste any
-   of them; Amy detects which one it is.
+   of them; Amy detects which one it is. It can also talk to **any
+   OpenAI-compatible endpoint** (a local model via Ollama / LM Studio, or a
+   service like OpenRouter, Groq, or Together) when you give it a base URL.
 
 From there, *you* build the client. Tell the chat what you want to see —
 "a feed of the latest notes", "a profile card", "a box to publish a note" —
@@ -44,7 +46,12 @@ python3 -m http.server 8000
    (`sk-ant-…` → Claude, `sk-…` → OpenAI, `AIza…`/`AQ.…` → Gemini) and verifies
    it live before connecting. The key is stored only in this browser's
    `localStorage` and sent directly to that provider's API. (Model and relays
-   live in **Settings**.)
+   live in **Settings**.) To use a local model or another OpenAI-compatible
+   service instead, add its **base URL** in the same dialog (e.g.
+   `http://localhost:11434/v1` for Ollama, `https://openrouter.ai/api/v1`); Amy
+   then speaks the OpenAI format to it, and the key may be left blank if the
+   server needs none. The endpoint must allow browser (CORS) access — local
+   servers generally do.
 2. (Optional) Click **Connect signer** to authorize your NIP-07 extension so
    views can read your pubkey and publish on your behalf. If a Nostr extension
    is detected, Amy prompts you to do this right after you log in. **No
@@ -68,8 +75,8 @@ python3 -m http.server 8000
 | ---------------- | --------------------------------------------------------------------- |
 | `index.html`     | App shell: canvas (left) + chat (right) + settings dialog.            |
 | `js/app.js`      | Orchestration, project state, the system prompt, and the model's tools.|
-| `js/auth.js`     | Detects the provider from a pasted key and verifies it live.          |
-| `js/llm.js`      | Claude, OpenAI **and** Gemini API client + the shared tool-use loop.   |
+| `js/auth.js`     | Detects the provider from a pasted key (or base URL) and verifies it live. |
+| `js/llm.js`      | Claude, OpenAI, Gemini **and** OpenAI-compatible API client + the shared tool-use loop. |
 | `js/nostr.js`    | Relay pool (query/subscribe/publish/count/search), NIP-42 relay AUTH, NIP-45 counts, NIP-50 search, NIP-07 signer, NIP-19 bech32. |
 | `js/views.js`    | Runtime that executes a generated view into the page with an `api`.   |
 | `js/storage.js`  | Persists the whole project to `localStorage`.                         |

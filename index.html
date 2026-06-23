@@ -117,7 +117,7 @@
           <span id="set-claude-state" class="muted">Not connected.</span>
           <button type="button" id="set-manage-claude" class="ghost">Log in</button>
         </div>
-        <small>Amy talks to Claude, OpenAI, or Gemini with your own API key, stored only in this browser.</small>
+        <small>Amy talks to Claude, OpenAI, Gemini, or any OpenAI-compatible endpoint with your own API key, stored only in this browser.</small>
       </div>
 
       <label>Model
@@ -149,6 +149,8 @@
         Connect with your own <strong>Claude</strong>, <strong>OpenAI</strong>, or
         <strong>Gemini</strong> API key, which is stored only in this browser
         (localStorage) and sent straight to the provider. Amy detects which one you paste.
+        You can also point Amy at any <strong>OpenAI-compatible</strong> endpoint
+        (a local model or another service) by adding its base URL below.
       </p>
 
       <ol class="steps">
@@ -163,6 +165,15 @@
         <li>
           <span>Paste the key here (<code>sk-ant-…</code> for Claude, <code>sk-…</code> for OpenAI, <code>AIza…</code> or <code>AQ.…</code> for Gemini):</span>
           <input type="password" id="connect-apikey" placeholder="sk-ant-… / sk-… / AIza…/AQ.…" autocomplete="off" />
+        </li>
+        <li>
+          <span>
+            Using a local model or another OpenAI-compatible service (Ollama, LM Studio,
+            OpenRouter, Groq, Together, …)? Put its base URL here and Amy talks to it in the
+            OpenAI format — the key above may be blank if the server needs none. Leave this
+            empty for Claude / OpenAI / Gemini.
+          </span>
+          <input type="text" id="connect-baseurl" placeholder="https://… /v1  (optional)" autocomplete="off" spellcheck="false" />
         </li>
       </ol>
 
