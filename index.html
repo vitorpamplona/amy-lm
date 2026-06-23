@@ -94,11 +94,11 @@
           <span id="set-claude-state" class="muted">Not connected.</span>
           <button type="button" id="set-manage-claude" class="ghost">Log in</button>
         </div>
-        <small>Amy talks to Claude or Gemini with your own API key, stored only in this browser.</small>
+        <small>Amy talks to Claude, OpenAI, or Gemini with your own API key, stored only in this browser.</small>
       </div>
 
       <label>Model
-        <input type="text" id="set-model" placeholder="claude-opus-4-8 / gemini-2.5-pro" />
+        <input type="text" id="set-model" placeholder="claude-opus-4-8 / gpt-5 / gemini-2.5-pro" />
       </label>
 
       <label>Relays (one wss:// URL per line)
@@ -122,22 +122,23 @@
       <h3>Log in</h3>
       <p class="muted">
         Amy runs entirely in your browser — there is no server to hold a session.
-        Connect with your own <strong>Claude</strong> or <strong>Gemini</strong> API key,
-        which is stored only in this browser (localStorage) and sent straight to the
-        provider. Amy detects which one you paste.
+        Connect with your own <strong>Claude</strong>, <strong>OpenAI</strong>, or
+        <strong>Gemini</strong> API key, which is stored only in this browser
+        (localStorage) and sent straight to the provider. Amy detects which one you paste.
       </p>
 
       <ol class="steps">
         <li>
-          <span>Create a free API key from whichever you use:</span>
+          <span>Create an API key from whichever you use:</span>
           <span class="console-links">
             <a id="connect-open-anthropic" class="btn-link" href="#" target="_blank" rel="noopener">Anthropic Console ↗</a>
+            <a id="connect-open-openai" class="btn-link" href="#" target="_blank" rel="noopener">OpenAI Platform ↗</a>
             <a id="connect-open-google" class="btn-link" href="#" target="_blank" rel="noopener">Google AI Studio ↗</a>
           </span>
         </li>
         <li>
-          <span>Paste the key here (<code>sk-ant-…</code> for Claude, <code>AIza…</code> or <code>AQ.…</code> for Gemini):</span>
-          <input type="password" id="connect-apikey" placeholder="sk-ant-… or AIza…/AQ.…" autocomplete="off" />
+          <span>Paste the key here (<code>sk-ant-…</code> for Claude, <code>sk-…</code> for OpenAI, <code>AIza…</code> or <code>AQ.…</code> for Gemini):</span>
+          <input type="password" id="connect-apikey" placeholder="sk-ant-… / sk-… / AIza…/AQ.…" autocomplete="off" />
         </li>
       </ol>
 

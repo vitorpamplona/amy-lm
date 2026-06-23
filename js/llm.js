@@ -1,19 +1,22 @@
-// llm.js — talks to the chosen LLM (Anthropic Claude or Google Gemini) directly
-// from the browser and runs the tool-use loop that lets the model build the
-// client.
+// llm.js — talks to the chosen LLM (Anthropic Claude, OpenAI, or Google Gemini)
+// directly from the browser and runs the tool-use loop that lets the model build
+// the client.
 //
 // No server: requests go straight to the provider's API using the user's own
-// key (stored locally). Both providers allow direct browser access via CORS —
-// Anthropic needs the direct-browser-access opt-in header; Gemini does not.
+// key (stored locally). All three providers allow direct browser access via
+// CORS — Anthropic needs the direct-browser-access opt-in header; OpenAI and
+// Gemini do not.
 //
 // The conversation is stored in one canonical (Anthropic-shaped) message format
-// in app/storage; the Gemini path translates that to/from Gemini's `contents`
-// shape on the way in and out, so the rest of the app never has to branch.
+// in app/storage; the OpenAI and Gemini paths translate that to/from their
+// respective shapes on the way in and out, so the rest of the app never has to
+// branch.
 
 import { detectProvider } from './auth.js';
 
 const ANTHROPIC_ENDPOINT = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
+const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 const MAX_STEPS = 16; // safety valve against runaway tool loops
 
@@ -23,7 +26,7 @@ const MAX_STEPS = 16; // safety valve against runaway tool loops
  *
  * @param {object} args
  * @param {string} args.apiKey
- * @param {string} [args.provider] - 'anthropic' | 'google'; inferred from the key if omitted
+ * @param {string} [args.provider] - 'anthropic' | 'openai' | 'google'; inferred from the key if omitted
  * @param {string} args.model
  * @param {string} args.system
  * @param {Array}  args.messages - existing history (will be appended to in place)
@@ -34,9 +37,11 @@ const MAX_STEPS = 16; // safety valve against runaway tool loops
  * @returns {Promise<Array>} the updated messages array
  */
 export async function converse(args) {
-  if (!args.apiKey) throw new Error('No API key set — open Settings to connect Claude or Gemini.');
+  if (!args.apiKey) throw new Error('No API key set — open Settings to connect Claude, OpenAI, or Gemini.');
   const provider = args.provider || detectProvider(args.apiKey);
-  return provider === 'google' ? converseGemini(args) : converseAnthropic(args);
+  if (provider === 'google') return converseGemini(args);
+  if (provider === 'openai') return converseOpenAI(args);
+  return converseAnthropic(args);
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +87,60 @@ async function converseAnthropic({ apiKey, model, system, messages, tools, dispa
     if (response.stop_reason !== 'tool_use') return messages;
 
     const toolUses = response.content.filter((b) => b.type === 'tool_use');
+    messages.push({ role: 'user', content: await runTools(toolUses, dispatch, onToolUse) });
+  }
+  throw new Error('Tool loop exceeded 16 steps; stopping to avoid a runaway.');
+}
+
+// ---------------------------------------------------------------------------
+// OpenAI
+// ---------------------------------------------------------------------------
+async function callOpenAI({ apiKey, model, messages, tools }) {
+  const res = await fetch(OPENAI_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: model || 'gpt-5',
+      max_completion_tokens: 16000,
+      messages,
+      tools: tools.length ? tools : undefined,
+    }),
+  });
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json()).error?.message || ''; } catch {}
+    throw new Error(`OpenAI API ${res.status}: ${detail || res.statusText}`);
+  }
+  return res.json();
+}
+
+async function converseOpenAI({ apiKey, model, system, messages, tools, dispatch, onText, onToolUse }) {
+  const openaiTools = toOpenAITools(tools);
+
+  for (let step = 0; step < MAX_STEPS; step++) {
+    const data = await callOpenAI({ apiKey, model, messages: toOpenAIMessages(system, messages), tools: openaiTools });
+    const msg = data.choices?.[0]?.message || {};
+
+    // Translate the OpenAI message back into canonical (Anthropic-shaped) blocks
+    // so storage and the transcript renderer stay provider-agnostic.
+    const blocks = [];
+    if (typeof msg.content === 'string' && msg.content) {
+      blocks.push({ type: 'text', text: msg.content });
+    }
+    for (const tc of msg.tool_calls || []) {
+      let input = {};
+      try { input = JSON.parse(tc.function?.arguments || '{}'); } catch {}
+      blocks.push({ type: 'tool_use', id: tc.id, name: tc.function?.name, input });
+    }
+    messages.push({ role: 'assistant', content: blocks });
+
+    for (const b of blocks) {
+      if (b.type === 'text' && onText) onText(b.text);
+    }
+
+    const toolUses = blocks.filter((b) => b.type === 'tool_use');
+    if (!toolUses.length) return messages;
+
     messages.push({ role: 'user', content: await runTools(toolUses, dispatch, onToolUse) });
   }
   throw new Error('Tool loop exceeded 16 steps; stopping to avoid a runaway.');
@@ -170,6 +229,55 @@ async function runTools(toolUses, dispatch, onToolUse) {
     });
   }
   return results;
+}
+
+// Anthropic tool defs -> OpenAI function tools. OpenAI accepts the JSON Schema
+// in input_schema directly, so no sanitizing is needed.
+function toOpenAITools(tools) {
+  return tools.map((t) => ({
+    type: 'function',
+    function: { name: t.name, description: t.description, parameters: t.input_schema },
+  }));
+}
+
+// Canonical (Anthropic-shaped) messages -> OpenAI chat `messages`. The system
+// prompt becomes a leading system message; assistant tool_use blocks become
+// `tool_calls`; user tool_result blocks become `tool` role messages keyed by id.
+function toOpenAIMessages(system, messages) {
+  const out = [{ role: 'system', content: system }];
+  for (const m of messages) {
+    if (m.role === 'user') {
+      if (typeof m.content === 'string') {
+        out.push({ role: 'user', content: m.content });
+      } else if (Array.isArray(m.content)) {
+        for (const b of m.content) {
+          if (b.type === 'tool_result') {
+            out.push({
+              role: 'tool',
+              tool_call_id: b.tool_use_id,
+              content: typeof b.content === 'string' ? b.content : JSON.stringify(b.content),
+            });
+          } else if (b.type === 'text' && b.text) {
+            out.push({ role: 'user', content: b.text });
+          }
+        }
+      }
+    } else if (m.role === 'assistant') {
+      const blocks = Array.isArray(m.content) ? m.content : [{ type: 'text', text: m.content }];
+      const text = blocks.filter((b) => b.type === 'text' && b.text).map((b) => b.text).join('\n');
+      const toolCalls = blocks
+        .filter((b) => b.type === 'tool_use')
+        .map((b) => ({
+          id: b.id,
+          type: 'function',
+          function: { name: b.name, arguments: JSON.stringify(b.input || {}) },
+        }));
+      const msg = { role: 'assistant', content: text || null };
+      if (toolCalls.length) msg.tool_calls = toolCalls;
+      out.push(msg);
+    }
+  }
+  return out;
 }
 
 // Anthropic tool defs -> Gemini functionDeclarations.

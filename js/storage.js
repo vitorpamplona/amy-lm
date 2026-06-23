@@ -8,7 +8,7 @@ const DEFAULTS = {
   name: 'untitled project',
   settings: {
     apiKey: '',
-    provider: '', // 'anthropic' | 'google'; set when a key is connected
+    provider: '', // 'anthropic' | 'openai' | 'google'; set when a key is connected
     model: 'claude-opus-4-8',
     relays: ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band'],
   },
