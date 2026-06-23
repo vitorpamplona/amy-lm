@@ -121,7 +121,12 @@
       </div>
 
       <label>Model
-        <input type="text" id="set-model" placeholder="claude-opus-4-8 / gpt-5 / gemini-2.5-pro" />
+        <div class="conn-row">
+          <input type="text" id="set-model" list="set-model-options" placeholder="claude-opus-4-8 / gpt-5 / gemini-2.5-pro" />
+          <button type="button" id="set-refresh-models" class="ghost">Refresh</button>
+        </div>
+        <datalist id="set-model-options"></datalist>
+        <small id="set-model-hint">Pick from the models your connected key can use, or type any id. Connect a key to populate this list.</small>
       </label>
 
       <label>Discovery relays (one wss:// URL per line)

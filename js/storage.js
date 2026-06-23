@@ -14,6 +14,11 @@ const DEFAULTS = {
     // of one of the built-in providers. Empty for Claude / OpenAI / Gemini.
     baseUrl: '',
     model: 'claude-opus-4-8',
+    // Model ids the connected provider/key reported at login (or via the
+    // "Refresh" button in Settings). Used to populate the Model picker. Not
+    // authoritative — the user may still type any id, e.g. for an endpoint that
+    // doesn't list its models.
+    availableModels: [],
     relays: ['wss://relay.damus.io', 'wss://nos.lol'],
     // Remembered NIP-07 identity so a returning nostr user is recognized
     // without reconnecting. pubkey is hex; profile caches { name, picture } so

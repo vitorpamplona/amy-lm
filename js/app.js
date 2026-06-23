@@ -658,8 +658,47 @@ function openSettings() {
   $('#set-model').value = project.settings.model;
   $('#set-relays').value = project.settings.relays.join('\n');
   $('#set-projname').value = project.name;
+  populateModelOptions(project.settings.availableModels);
   refreshClaudeStatus();
   $('#settings-dialog').showModal();
+}
+
+// Fill the Model <datalist> with the connected provider's reported ids, and
+// reflect how many we have in the hint line. The input stays free-text, so a
+// user can always type an id the endpoint didn't list.
+function populateModelOptions(models) {
+  const list = $('#set-model-options');
+  list.innerHTML = (models || []).map((m) => `<option value="${m}"></option>`).join('');
+  const hint = $('#set-model-hint');
+  const refresh = $('#set-refresh-models');
+  const connected = !!(project.settings.provider);
+  refresh.disabled = !connected;
+  if (!connected) {
+    hint.textContent = 'Pick from the models your connected key can use, or type any id. Connect a key to populate this list.';
+  } else if (models && models.length) {
+    hint.textContent = `${models.length} model${models.length === 1 ? '' : 's'} available from your connected key — pick one or type any id.`;
+  } else {
+    hint.textContent = 'Your endpoint didn’t list any models — type the model id manually, or hit Refresh.';
+  }
+}
+
+// Re-query the connected key/endpoint for its current model list, without
+// reconnecting. Uses the stored credentials.
+async function refreshModelOptions() {
+  const btn = $('#set-refresh-models');
+  const hint = $('#set-model-hint');
+  if (!project.settings.provider) return;
+  btn.disabled = true;
+  hint.textContent = 'Fetching available models…';
+  try {
+    const { models } = await verifyApiKey(project.settings.apiKey, project.settings.baseUrl);
+    project.settings.availableModels = models;
+    persist();
+    populateModelOptions(models);
+  } catch (err) {
+    hint.textContent = err.message || String(err);
+    btn.disabled = false;
+  }
 }
 
 function saveSettingsFromForm() {
@@ -751,6 +790,7 @@ async function submitConnect() {
     project.settings.apiKey = key;
     project.settings.provider = provider;
     project.settings.baseUrl = provider === 'openai-compatible' ? normalizeBaseUrl(baseUrl) : '';
+    project.settings.availableModels = models; // remember for the Model picker in Settings
     // If the endpoint listed models and the configured one isn't among them, fall
     // back to the provider default (or the first listed) so the first message works.
     // When no models are listed (some compatible servers omit /models), keep the
@@ -782,6 +822,7 @@ function disconnectClaude() {
   project.settings.apiKey = '';
   project.settings.provider = '';
   project.settings.baseUrl = '';
+  project.settings.availableModels = [];
   persist();
   refreshClaudeStatus();
   $('#connect-apikey').value = '';
@@ -822,6 +863,7 @@ function init() {
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
 
   $('#btn-settings').addEventListener('click', openSettings);
+  $('#set-refresh-models').addEventListener('click', refreshModelOptions);
   $('#settings-dialog').addEventListener('close', () => {
     if ($('#settings-dialog').returnValue === 'save') saveSettingsFromForm();
   });
