@@ -54,7 +54,7 @@ function compactHistory() {
 // ---------------------------------------------------------------------------
 const SYSTEM = `You are Amy, the assistant at the center of a self-building Nostr client that runs entirely in the user's browser (no server). Your job is to build and edit small interfaces ("views") for the Nostr events the user cares about, in response to plain-language requests.
 
-You know the Nostr protocol (NIP-01 events: { id, pubkey, created_at, kind, tags, content, sig }; common kinds: 0 = profile metadata, 1 = short text note, 3 = contacts, 7 = reaction). When you need details about a NIP, call read_nip — do not guess.
+You know the Nostr protocol (NIP-01 events: { id, pubkey, created_at, kind, tags, content, sig }; common kinds: 0 = profile metadata, 1 = short text note, 3 = contacts, 7 = reaction). When you need details about a NIP, call read_nip — do not guess. Beyond those four common kinds, do NOT guess kind numbers from memory: when a request maps to any other event type (long-form articles, zaps, lists, highlights, file metadata, …), first call read_nip with "README" to consult the authoritative event-kind → NIP index, then read_nip the specific NIP it points to before choosing a kind or filter.
 
 ## Building views
 To create or update an interface, call save_view with a 'code' string. The code is the BODY of a function called as render(root, api):
@@ -146,7 +146,7 @@ const TOOLS = [
     description: 'Fetch the markdown text of a NIP from the official nostr-protocol/nips repository.',
     input_schema: {
       type: 'object',
-      properties: { nip: { type: 'string', description: 'NIP number or filename, e.g. "01", "51", or "7".' } },
+      properties: { nip: { type: 'string', description: 'NIP number or filename, e.g. "01", "51", or "7". Use "README" to fetch the master event-kind → NIP index when you are unsure which kind a request maps to.' } },
       required: ['nip'],
     },
   },
@@ -658,8 +658,47 @@ function openSettings() {
   $('#set-model').value = project.settings.model;
   $('#set-relays').value = project.settings.relays.join('\n');
   $('#set-projname').value = project.name;
+  populateModelOptions(project.settings.availableModels);
   refreshClaudeStatus();
   $('#settings-dialog').showModal();
+}
+
+// Fill the Model <datalist> with the connected provider's reported ids, and
+// reflect how many we have in the hint line. The input stays free-text, so a
+// user can always type an id the endpoint didn't list.
+function populateModelOptions(models) {
+  const list = $('#set-model-options');
+  list.innerHTML = (models || []).map((m) => `<option value="${m}"></option>`).join('');
+  const hint = $('#set-model-hint');
+  const refresh = $('#set-refresh-models');
+  const connected = !!(project.settings.provider);
+  refresh.disabled = !connected;
+  if (!connected) {
+    hint.textContent = 'Pick from the models your connected key can use, or type any id. Connect a key to populate this list.';
+  } else if (models && models.length) {
+    hint.textContent = `${models.length} model${models.length === 1 ? '' : 's'} available from your connected key — pick one or type any id.`;
+  } else {
+    hint.textContent = 'Your endpoint didn’t list any models — type the model id manually, or hit Refresh.';
+  }
+}
+
+// Re-query the connected key/endpoint for its current model list, without
+// reconnecting. Uses the stored credentials.
+async function refreshModelOptions() {
+  const btn = $('#set-refresh-models');
+  const hint = $('#set-model-hint');
+  if (!project.settings.provider) return;
+  btn.disabled = true;
+  hint.textContent = 'Fetching available models…';
+  try {
+    const { models } = await verifyApiKey(project.settings.apiKey, project.settings.baseUrl);
+    project.settings.availableModels = models;
+    persist();
+    populateModelOptions(models);
+  } catch (err) {
+    hint.textContent = err.message || String(err);
+    btn.disabled = false;
+  }
 }
 
 function saveSettingsFromForm() {
@@ -753,6 +792,7 @@ async function submitConnect() {
     project.settings.apiKey = key;
     project.settings.provider = provider;
     project.settings.baseUrl = provider === 'openai-compatible' ? normalizeBaseUrl(baseUrl) : '';
+    project.settings.availableModels = models; // remember for the Model picker in Settings
     // If the endpoint listed models and the configured one isn't among them, fall
     // back to the provider default (or the first listed) so the first message works.
     // When no models are listed (some compatible servers omit /models), keep the
@@ -784,6 +824,7 @@ function disconnectClaude() {
   project.settings.apiKey = '';
   project.settings.provider = '';
   project.settings.baseUrl = '';
+  project.settings.availableModels = [];
   persist();
   refreshClaudeStatus();
   $('#connect-apikey').value = '';
@@ -824,6 +865,7 @@ function init() {
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
 
   $('#btn-settings').addEventListener('click', openSettings);
+  $('#set-refresh-models').addEventListener('click', refreshModelOptions);
   $('#settings-dialog').addEventListener('close', () => {
     if ($('#settings-dialog').returnValue === 'save') saveSettingsFromForm();
   });

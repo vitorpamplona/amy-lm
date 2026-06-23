@@ -429,6 +429,8 @@ dialog[open] { animation: pop .18s ease; }
 .field-label { font-weight: 600; }
 .field small { color: var(--muted); line-height: 1.4; }
 .conn-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.conn-row input { flex: 1 1 auto; min-width: 0; }
+.conn-row .ghost { flex: 0 0 auto; white-space: nowrap; }
 .muted { color: var(--muted); }
 .muted.ok, .connect-status.ok { color: var(--ok); }
 
