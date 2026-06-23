@@ -283,7 +283,11 @@ button:disabled { opacity: .5; cursor: not-allowed; transform: none; filter: non
 .tab .x { color: var(--muted); font-weight: 700; border-radius: 6px; padding: 0 4px; line-height: 1.2; }
 .tab .x:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
 
-#canvas-body { flex: 1 1 auto; overflow: auto; padding: 22px; }
+/* The body is a non-scrolling host; each view gets its own scrollable pane so
+   tabs keep independent scroll positions. Only the active pane is shown. */
+#canvas-body { flex: 1 1 auto; display: flex; min-height: 0; }
+.view-pane,
+#empty-canvas { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 22px; }
 
 .empty { max-width: 580px; margin: 8vh auto; color: var(--muted); }
 .empty h2 { color: var(--text); font-size: 22px; letter-spacing: -.02em; margin: 0 0 10px; }
