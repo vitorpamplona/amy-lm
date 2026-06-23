@@ -5,8 +5,8 @@ import * as store from './storage.js';
 import * as nostr from './nostr.js';
 import * as views from './views.js';
 import * as theme from './theme.js';
-import { converse } from './claude.js';
-import { verifyApiKey, CONSOLE_KEYS_URL } from './auth.js';
+import { converse } from './llm.js';
+import { verifyApiKey, detectProvider, PROVIDERS } from './auth.js';
 
 // ---------------------------------------------------------------------------
 // State
@@ -146,7 +146,10 @@ async function dispatch(name, input) {
       return text.length > 24000 ? text.slice(0, 24000) + '\n…(truncated)' : text;
     }
     case 'query_relays': {
-      const events = await nostr.query(project.settings.relays, input.filters, { timeout: input.timeout ?? 4000 });
+      // Gemini may hand us the filter as a JSON string (see sanitizeSchema); tolerate both.
+      let filters = input.filters;
+      if (typeof filters === 'string') { try { filters = JSON.parse(filters); } catch {} }
+      const events = await nostr.query(project.settings.relays, filters, { timeout: input.timeout ?? 4000 });
       const trimmed = events.slice(0, 20).map((e) => ({
         id: e.id, pubkey: e.pubkey, kind: e.kind, created_at: e.created_at,
         tags: e.tags, content: (e.content || '').slice(0, 500),
@@ -268,7 +271,7 @@ async function onSend(e) {
   if (busy) return;
   const text = $('#prompt').value.trim();
   if (!text) return;
-  if (!project.settings.apiKey) { openConnect(); setStatus('Log in with Claude to start.'); return; }
+  if (!project.settings.apiKey) { openConnect(); setStatus('Connect Claude or Gemini to start.'); return; }
 
   $('#prompt').value = '';
   project.chat.push({ role: 'user', content: text });
@@ -282,6 +285,7 @@ async function onSend(e) {
   try {
     await converse({
       apiKey: project.settings.apiKey,
+      provider: project.settings.provider,
       model: project.settings.model,
       system: SYSTEM,
       messages: project.chat,
@@ -365,18 +369,20 @@ function maskKey(key) {
 
 function refreshClaudeStatus() {
   const connected = !!project.settings.apiKey;
+  const provider = project.settings.provider || detectProvider(project.settings.apiKey);
+  const label = provider ? PROVIDERS[provider].label : 'LLM';
   const pill = $('#claude-status');
-  pill.textContent = connected ? 'Claude connected' : 'not connected';
+  pill.textContent = connected ? `${label} connected` : 'not connected';
   pill.classList.toggle('ok', connected);
-  $('#btn-connect-claude').textContent = connected ? 'Claude' : 'Log in with Claude';
+  $('#btn-connect-claude').textContent = connected ? label : 'Log in';
   // Settings mirror, if present.
   const state = $('#set-claude-state');
   if (state) {
-    state.textContent = connected ? `Connected (${maskKey(project.settings.apiKey)}).` : 'Not connected.';
+    state.textContent = connected ? `Connected to ${label} (${maskKey(project.settings.apiKey)}).` : 'Not connected.';
     state.classList.toggle('ok', connected);
   }
   const manage = $('#set-manage-claude');
-  if (manage) manage.textContent = connected ? 'Manage' : 'Log in with Claude';
+  if (manage) manage.textContent = connected ? 'Manage' : 'Log in';
 }
 
 function setConnectStatus(text, kind = '') {
@@ -386,13 +392,23 @@ function setConnectStatus(text, kind = '') {
 }
 
 function openConnect() {
-  $('#connect-open-console').href = CONSOLE_KEYS_URL;
+  $('#connect-open-anthropic').href = PROVIDERS.anthropic.consoleUrl;
+  $('#connect-open-google').href = PROVIDERS.google.consoleUrl;
   $('#connect-apikey').value = project.settings.apiKey || '';
   $('#connect-disconnect').hidden = !project.settings.apiKey;
-  setConnectStatus(project.settings.apiKey ? 'Claude is connected. Paste a new key to replace it.' : '');
+  setConnectStatus(project.settings.apiKey ? 'Connected. Paste a new key to replace it.' : '');
   if ($('#settings-dialog').open) $('#settings-dialog').close();
   $('#connect-dialog').showModal();
   $('#connect-apikey').focus();
+}
+
+// Live hint as the user types, so they know which provider their key maps to.
+function reflectDetectedProvider() {
+  const key = $('#connect-apikey').value.trim();
+  if (!key) { setConnectStatus(''); return; }
+  const provider = detectProvider(key);
+  if (provider) setConnectStatus(`Detected a ${PROVIDERS[provider].label} key.`, 'ok');
+  else setConnectStatus('Unrecognized key — expected sk-ant-… (Claude) or AIza… (Gemini).', '');
 }
 
 async function submitConnect() {
@@ -401,16 +417,18 @@ async function submitConnect() {
   submit.disabled = true;
   setConnectStatus('Verifying with Anthropic…', '');
   try {
-    const { models } = await verifyApiKey(key);
+    const { provider, models } = await verifyApiKey(key);
     project.settings.apiKey = key;
-    // If the configured model isn't offered by this account, fall back to one
-    // that is, so the very first message doesn't fail.
-    if (models.length && !models.includes(project.settings.model)) {
-      project.settings.model = models[0];
+    project.settings.provider = provider;
+    // If the configured model isn't offered by this provider/account, fall back
+    // to the provider default (or the first listed) so the first message works.
+    if (!models.includes(project.settings.model)) {
+      const def = PROVIDERS[provider].defaultModel;
+      project.settings.model = models.includes(def) ? def : (models[0] || def);
     }
     persist();
     refreshClaudeStatus();
-    setConnectStatus('Connected! You can close this and start chatting.', 'ok');
+    setConnectStatus(`Connected to ${PROVIDERS[provider].label}! You can close this and start chatting.`, 'ok');
     setStatus('');
     setTimeout(() => $('#connect-dialog').close(), 700);
   } catch (err) {
@@ -422,6 +440,7 @@ async function submitConnect() {
 
 function disconnectClaude() {
   project.settings.apiKey = '';
+  project.settings.provider = '';
   persist();
   refreshClaudeStatus();
   $('#connect-apikey').value = '';
@@ -458,6 +477,7 @@ function init() {
   $('#connect-submit').addEventListener('click', submitConnect);
   $('#connect-cancel').addEventListener('click', () => $('#connect-dialog').close());
   $('#connect-disconnect').addEventListener('click', disconnectClaude);
+  $('#connect-apikey').addEventListener('input', reflectDetectedProvider);
   $('#connect-apikey').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); submitConnect(); }
   });
@@ -470,7 +490,7 @@ function init() {
     renderTabs(); renderActiveView(); renderChatHistory();
   });
 
-  if (!project.settings.apiKey) setStatus('Log in with Claude (top right) to start, then ask Amy to build a view.');
+  if (!project.settings.apiKey) setStatus('Log in (top right) with a Claude or Gemini key to start, then ask Amy to build a view.');
 }
 
 init();

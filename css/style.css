@@ -394,6 +394,7 @@ dialog[open] { animation: pop .18s ease; }
   font-weight: 600;
 }
 .btn-link:hover { text-decoration: underline; }
+.console-links { display: flex; flex-wrap: wrap; gap: 16px; }
 .connect-status { min-height: 18px; font-size: 13px; color: var(--muted); }
 .connect-status.error { color: var(--danger); }
 #connect-form menu { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; padding: 0; }

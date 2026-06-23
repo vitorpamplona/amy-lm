@@ -6,8 +6,9 @@ Amy is a concept for a [Nostr](https://nostr.com) client with an LLM chat
 1. **Nostr** — NIP-01 events, relays, and how to read any NIP on demand.
 2. **NIP-07 signers** — it talks to your browser's Nostr extension (Alby,
    nos2x, …) to sign and publish.
-3. **How to reach Claude** — it calls the Anthropic API directly from the
-   browser using your own key.
+3. **How to reach an LLM** — it calls **Claude (Anthropic)** or **Gemini
+   (Google)** directly from the browser using your own key. Paste either; Amy
+   detects which one it is.
 
 From there, *you* build the client. Tell the chat what you want to see —
 "a feed of the latest notes", "a profile card", "a box to publish a note" —
@@ -15,8 +16,8 @@ and Claude writes a small live **view** that renders on the canvas. Your
 project (views, chat, settings) is saved in the browser, so it loads right
 back up when you return.
 
-There is **no server**. Everything runs client-side; Nostr relays and the
-Anthropic API are the only things it talks to.
+There is **no server**. Everything runs client-side; Nostr relays and your
+chosen LLM API (Anthropic or Google) are the only things it talks to.
 
 The UI ships with **light and dark themes** — use the ☀/☾ button in the top
 bar to switch. Your choice is remembered (and defaults to your system
@@ -35,33 +36,36 @@ python3 -m http.server 8000
 
 ## First-time setup
 
-1. Click **Log in with Claude** (top right). The guided dialog links you to the
-   Anthropic Console to create an API key; paste it back and Amy verifies it
-   live before connecting. The key is stored only in this browser's
-   `localStorage` and sent directly to the Anthropic API. (Model and relays live
-   in **Settings**.)
+1. Click **Log in** (top right). The guided dialog links you to the
+   [Anthropic Console](https://console.anthropic.com/settings/keys) (Claude) and
+   [Google AI Studio](https://aistudio.google.com/apikey) (Gemini) to create a
+   free API key. Paste either one — Amy detects the provider from the key
+   (`sk-ant-…` → Claude, `AIza…` → Gemini) and verifies it live before
+   connecting. The key is stored only in this browser's `localStorage` and sent
+   directly to that provider's API. (Model and relays live in **Settings**.)
 2. (Optional) Click **Connect signer** to authorize your NIP-07 extension so
    views can read your pubkey and publish on your behalf.
 3. Ask the chat to build something.
 
-> **Why not a real "Sign in with Claude" OAuth?** Amy has no server, and
-> Anthropic's OAuth token endpoint doesn't send CORS headers for third-party
-> web origins, so the browser can't complete the token exchange. The guided
-> key connection above is the serverless equivalent.
+> **Why paste a key instead of "Sign in"?** Amy has no server to hold a
+> session, so it authenticates with a key you own, kept entirely in your
+> browser. Both providers' inference endpoints allow direct browser access
+> (CORS), so a verified key works immediately.
 
 ## How it works
 
 | File             | Responsibility                                                        |
 | ---------------- | --------------------------------------------------------------------- |
 | `index.html`     | App shell: canvas (left) + chat (right) + settings dialog.            |
-| `js/app.js`      | Orchestration, project state, the system prompt, and Claude's tools.  |
-| `js/claude.js`   | Anthropic Messages API client + the tool-use loop.                    |
+| `js/app.js`      | Orchestration, project state, the system prompt, and the model's tools.|
+| `js/auth.js`     | Detects the provider from a pasted key and verifies it live.          |
+| `js/llm.js`      | Claude **and** Gemini API client + the shared tool-use loop.          |
 | `js/nostr.js`    | Relay pool (query/subscribe/publish), NIP-07 signer, NIP-19 bech32.   |
 | `js/views.js`    | Runtime that executes a generated view into the page with an `api`.   |
 | `js/storage.js`  | Persists the whole project to `localStorage`.                         |
 | `js/theme.js`    | Light/dark theme preference (persisted separately, survives reset).   |
 
-### The tools Claude has
+### The tools the model has
 
 - `read_nip` — fetch any NIP's markdown from the `nostr-protocol/nips` repo.
 - `query_relays` — run a one-shot Nostr query to inspect real data.
