@@ -25,6 +25,30 @@ function persist() { store.save(project); }
 
 function uid() { return 'v' + Math.random().toString(36).slice(2, 9); }
 
+// The full source of every view we build piles up inside save_view tool_use
+// blocks in the chat, which inflates every request the model sees. The canonical
+// copy lives in project.views and can be re-read with read_view, so before each
+// turn we strip the code out of older save_view calls — keeping the most recent
+// one intact, so a quick follow-up edit needs no extra round trip.
+const ELIDED_CODE = '[elided to save context — call read_view to fetch the current code]';
+
+function compactHistory() {
+  let last = null;
+  for (const m of project.chat) {
+    if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
+    for (const b of m.content) if (b.type === 'tool_use' && b.name === 'save_view') last = b;
+  }
+  for (const m of project.chat) {
+    if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
+    for (const b of m.content) {
+      if (b.type === 'tool_use' && b.name === 'save_view' && b !== last
+          && b.input && typeof b.input.code === 'string' && b.input.code !== ELIDED_CODE) {
+        b.input.code = ELIDED_CODE;
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // System prompt — teaches Claude what it is and the view contract
 // ---------------------------------------------------------------------------
@@ -55,7 +79,7 @@ Guidance:
 - Prefer api.query for fetch-once lists; use api.subscribe only for live feeds.
 - When the user references an account by npub, convert with api.nip19.toHexPubkey before using it in filters (authors are hex).
 
-When you update an existing view, reuse its id (call list_views first if unsure). Keep titles short. After building, briefly tell the user what you made in one or two sentences. Do not paste the full code into the chat.`;
+When you update an existing view, reuse its id and call read_view(id) first to fetch its current code, then edit that code rather than rewriting it from memory — older code is dropped from the chat to save context, so do not rely on the history for it. Use list_views to find ids. Keep titles short. After building, briefly tell the user what you made in one or two sentences. Do not paste the full code into the chat.`;
 
 // ---------------------------------------------------------------------------
 // Tools
@@ -78,6 +102,15 @@ const TOOLS = [
     name: 'list_views',
     description: 'List the current views with their ids and titles.',
     input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'read_view',
+    description: 'Return the current title and full code of one view by id. Call this before editing an existing view so you edit its live code instead of guessing — the chat history may no longer contain it.',
+    input_schema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The view id to read.' } },
+      required: ['id'],
+    },
   },
   {
     name: 'delete_view',
@@ -131,6 +164,11 @@ async function dispatch(name, input) {
     }
     case 'list_views':
       return JSON.stringify(project.views.map((v) => ({ id: v.id, title: v.title })));
+    case 'read_view': {
+      const view = project.views.find((v) => v.id === input.id);
+      if (!view) return `No view with id ${input.id}.`;
+      return JSON.stringify({ id: view.id, title: view.title, code: view.code });
+    }
     case 'delete_view': {
       const before = project.views.length;
       project.views = project.views.filter((v) => v.id !== input.id);
@@ -298,6 +336,7 @@ async function onSend(e) {
   $('#prompt').value = '';
   project.chat.push({ role: 'user', content: text });
   addMessageEl('user', text);
+  compactHistory();
   persist();
 
   busy = true;
