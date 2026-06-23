@@ -373,14 +373,15 @@ async function connectSigner() {
 // the placeholder silhouette if there's no picture or the image fails to load.
 function setAvatar(url, name) {
   const img = $('#user-avatar');
-  const fallback = $('#user-avatar-fallback');
   const btn = $('#user-menu-btn');
   if (!img) return;
   btn.classList.add('connected');
   if (name) { btn.title = name; btn.setAttribute('aria-label', name); }
   if (!url) return;
-  img.onload = () => { img.hidden = false; fallback.hidden = true; };
-  img.onerror = () => { img.hidden = true; fallback.hidden = false; };
+  // Show the picture only once it has actually loaded; on failure fall back to
+  // the silhouette. .has-img drives which one displays (see CSS).
+  img.onload = () => btn.classList.add('has-img');
+  img.onerror = () => btn.classList.remove('has-img');
   img.src = url;
 }
 
