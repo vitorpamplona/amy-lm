@@ -11,6 +11,10 @@
 
 import * as nostr from './nostr.js';
 
+// The AsyncFunction constructor isn't a global, so reach it via an async fn's
+// prototype. Compiling view code with it lets views use top-level `await`.
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+
 // Small helpers exposed to view code so it doesn't reinvent the basics.
 function el(tag, props = {}, children = []) {
   const node = document.createElement(tag);
@@ -68,12 +72,21 @@ export function runView(host, view, ctx) {
   const root = el('div', { class: 'view-host' });
   host.append(root);
   const api = makeApi(ctx);
-  try {
-    // eslint-disable-next-line no-new-func
-    const fn = new Function('root', 'api', view.code);
-    const maybeCleanup = fn(root, api);
-    if (typeof maybeCleanup === 'function' && ctx.onCleanup) ctx.onCleanup(maybeCleanup);
-  } catch (err) {
+  const fail = (err) => {
     root.append(el('div', { class: 'view-error', text: `View "${view.title}" failed:\n${err.stack || err}` }));
+  };
+  try {
+    // View code may use top-level `await`, so compile it as an async function.
+    // eslint-disable-next-line no-new-func
+    const fn = new AsyncFunction('root', 'api', view.code);
+    // Async functions always return a promise; resolve it to get the optional
+    // cleanup callback, and surface any rejection in the view itself.
+    Promise.resolve(fn(root, api))
+      .then((maybeCleanup) => {
+        if (typeof maybeCleanup === 'function' && ctx.onCleanup) ctx.onCleanup(maybeCleanup);
+      })
+      .catch(fail);
+  } catch (err) {
+    fail(err);
   }
 }
