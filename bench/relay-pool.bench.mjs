@@ -194,6 +194,7 @@ const api = {
   relays: [relayUrl(0), relayUrl(1)],
   el,
   queryAt: (relays, filters, opts) => nostr.query(relays, filters, opts),
+  queryStreamAt: (relays, filters, onEvent, opts) => nostr.queryStream(relays, filters, onEvent, opts),
 };
 
 // ---------------------------------------------------------------------------

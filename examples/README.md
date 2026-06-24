@@ -22,10 +22,18 @@ A 7-day report, built as a deliberate stress test of the relay pool:
 
 It's designed to stay light across **hundreds of relays in a browser tab**:
 
-- full events are never buffered — it keeps only a `Set` of seen ids, a small
-  `client → count` map, and one integer per relay;
+- full events are never buffered — each relay's events are **streamed** through
+  `api.queryStreamAt` and processed inline, so only a `Set` of seen ids, a small
+  `client → count` map, and one integer per relay survive each event;
 - a fixed-size concurrency pool keeps only ~10 relays in flight at a time;
 - the crawl runs in bounded waves with a hard relay cap and a per-relay `limit`.
+
+> `api.queryStream` / `api.queryStreamAt` are the streaming siblings of
+> `api.query` / `api.queryAt`: they call `onEvent(ev, url)` for each de-duped
+> event as it arrives and retain only ids (arrival order, no union cap), so a
+> sweep can aggregate and discard instead of holding the whole result set. See
+> [`bench/stream.bench.mjs`](../bench/stream.bench.mjs) for parity, incremental
+> delivery, and the memory comparison (~6.7 MB buffered vs ~0.05 MB streamed).
 
 Tunables (window, per-relay limit, relay cap, crawl depth, concurrency, chart
 sizes) are constants at the top of the file.

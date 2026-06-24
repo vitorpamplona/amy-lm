@@ -109,7 +109,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 async function runView(seeds) {
   const root = node('root');
-  const api = { relays: seeds, el, queryAt: (r, f, o) => nostr.query(r, f, o), countAt: (r, f, o) => nostr.count(r, f, o) };
+  const api = { relays: seeds, el, queryAt: (r, f, o) => nostr.query(r, f, o), queryStreamAt: (r, f, on, o) => nostr.queryStream(r, f, on, o), countAt: (r, f, o) => nostr.count(r, f, o) };
   await new AsyncFunction('root', 'api', viewSrc)(root, api);
   // Parse the rendered report.
   let section = null; const gapRows = []; const texts = []; let doneText = '';

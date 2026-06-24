@@ -120,21 +120,15 @@ try {
     const discovered = new Set(); // relay hints found this wave -> next frontier
 
     await mapPool(frontier, CONCURRENCY, async (url) => {
-      let evs;
-      try {
-        evs = await api.queryAt([url], FILTER, { timeout: RELAY_TIMEOUT });
-      } catch {
-        perRelay.set(url, 0); doneRelays++; return;
-      }
-      // queryAt already de-dupes by id within this relay, so evs.length is the
-      // relay's unique-event count. Returning the FULL limit is the tell that
-      // the relay had more in-window events than we fetched (see completeness).
-      perRelay.set(url, evs.length);
-      if (evs.length >= PER_RELAY_LIMIT) hitLimit.add(url);
-
-      for (const ev of evs) {
+      // Stream this relay's events and process each one inline, so we never hold
+      // a relay's whole page in memory — only the cross-relay `seen` ids and the
+      // running tallies survive each event. `relayCount` is this relay's unique
+      // count (queryStreamAt de-dupes by id within the relay).
+      let relayCount = 0;
+      const onEvent = (ev) => {
+        relayCount++;
         const id = ev && ev.id;
-        if (!id || seen.has(id)) continue; // cross-relay dup: count once, parse once
+        if (!id || seen.has(id)) return; // cross-relay dup: count once, parse once
         seen.add(id);
         const tags = ev.tags || [];
         let clientName = null;
@@ -148,8 +142,15 @@ try {
           }
         }
         if (clientName !== null) clientCounts.set(clientName, (clientCounts.get(clientName) || 0) + 1);
-      }
-      // evs goes out of scope here — nothing event-sized is retained.
+        // ev is discarded as soon as this returns — nothing event-sized is kept.
+      };
+      try {
+        await api.queryStreamAt([url], FILTER, onEvent, { timeout: RELAY_TIMEOUT });
+      } catch { /* keep whatever streamed before the error */ }
+      // Hitting the full limit is the tell that the relay had more in-window
+      // events than we fetched (see the completeness check below).
+      perRelay.set(url, relayCount);
+      if (relayCount >= PER_RELAY_LIMIT) hitLimit.add(url);
       doneRelays++;
       setStatus(`Wave ${wave + 1}/${MAX_WAVES} · reached ${doneRelays}/${queried.size} relays · ${seen.size.toLocaleString()} unique events · ${clientCounts.size} clients…`);
     });

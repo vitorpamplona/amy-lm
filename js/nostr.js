@@ -284,15 +284,19 @@ async function paginate(url, filter, opts = {}) {
   const singleRound = opts.paginate === false || !!filter.search;
   const maxPages = opts.maxPages ?? 25;
   const aborted = opts.aborted || (() => false); // lets subscribe() stop a backfill
-  const onEvent = opts.onEvent;                  // stream each new event as it lands
+  const onEvent = opts.onEvent;                  // each NEW (de-duped) event is pushed here as it lands
   const since = filter.since;
   const target = typeof filter.limit === 'number' ? filter.limit : Infinity;
   const unbounded = target === Infinity && since === undefined;
-  const collected = new Map(); // id -> event
+  // We keep only IDS for de-dup + cursor + limit accounting — never the events
+  // themselves — so a deep backfill streams through onEvent without piling the
+  // whole result up in memory. Callers that want the events collect them in
+  // their onEvent (query does); streaming callers process and discard each one.
+  const seenIds = new Set();
   let until = filter.until;
   for (let round = 0; ; round++) {
     if (aborted()) break;
-    const remaining = target === Infinity ? undefined : target - collected.size;
+    const remaining = target === Infinity ? undefined : target - seenIds.size;
     if (remaining !== undefined && remaining <= 0) break;
     const f = { ...filter };
     if (until === undefined) delete f.until; else f.until = until;
@@ -305,8 +309,8 @@ async function paginate(url, filter, opts = {}) {
     for (const ev of evs) {
       const ts = ev && typeof ev.created_at === 'number' ? ev.created_at : undefined;
       if (ts !== undefined) { if (ts < pageMin) pageMin = ts; if (ts > pageMax) pageMax = ts; }
-      if (ev && ev.id && !collected.has(ev.id)) {
-        collected.set(ev.id, ev); added++;
+      if (ev && ev.id && !seenIds.has(ev.id)) {
+        seenIds.add(ev.id); added++;
         if (onEvent && !aborted()) onEvent(ev);
       }
     }
@@ -339,7 +343,7 @@ async function paginate(url, filter, opts = {}) {
       break;
     }
   }
-  return [...collected.values()];
+  return seenIds.size; // unique events this relay yielded (events were streamed, not retained)
 }
 
 /** Sort newest-first (unless sortDesc is false) and, for a single limited
@@ -366,15 +370,50 @@ function finalize(seen, filterArr, sortDesc) {
 export async function query(relays, filters, opts = {}) {
   const filterArr = Array.isArray(filters) ? filters : [filters];
   const seen = new Map(); // id -> event
+  const collect = (ev) => { if (ev && ev.id && !seen.has(ev.id)) seen.set(ev.id, ev); };
   // Paginate every (relay, filter) pair independently and in parallel; each
   // relay walks its own cursor since its oldest event differs from the others'.
+  // paginate streams each new event to onEvent; we collect them into `seen`.
   await Promise.all(relays.flatMap((url) =>
-    filterArr.map(async (filter) => {
-      const evs = await paginate(url, filter, opts);
-      for (const ev of evs) if (ev && ev.id && !seen.has(ev.id)) seen.set(ev.id, ev);
-    })
+    filterArr.map((filter) => paginate(url, filter, { ...opts, onEvent: collect }))
   ));
   return finalize(seen, filterArr, opts.sort !== false);
+}
+
+/**
+ * Streaming one-shot query: like query(), but instead of resolving with an
+ * array it calls onEvent(event, url) for EACH event the moment it is de-duped
+ * across relays — holding only a Set of seen ids, never the events — so the
+ * caller can process and discard each one without the whole result set living
+ * in memory. Built for big network-wide sweeps over hundreds of relays.
+ *
+ * Differences from query():
+ *   - delivery is ARRIVAL order, not sorted (order is explicitly not promised);
+ *   - each relay is still bounded by the filter's `limit` (and `since`/`until`),
+ *     but there is NO cross-relay union cap — every de-duplicated event is
+ *     emitted. Bound the work with `since` / a per-relay `limit`.
+ * Resolves with the total count of unique events emitted, once every relay's
+ * pagination has finished. A throw from onEvent is swallowed so one bad event
+ * can't abort the sweep.
+ * @param {string[]} relays
+ * @param {object|object[]} filters - NIP-01 filter(s)
+ * @param {(event: object, url: string) => void} onEvent
+ * @param {object} [opts] - same as query(): { timeout, maxPages, paginate }
+ * @returns {Promise<number>}
+ */
+export async function queryStream(relays, filters, onEvent, opts = {}) {
+  const filterArr = Array.isArray(filters) ? filters : [filters];
+  const seen = new Set(); // ids only — the whole point is to not retain events
+  let count = 0;
+  const emit = (ev, url) => {
+    if (!ev || !ev.id || seen.has(ev.id)) return;
+    seen.add(ev.id); count++;
+    try { onEvent(ev, url); } catch { /* a bad handler must not abort the sweep */ }
+  };
+  await Promise.all(relays.flatMap((url) =>
+    filterArr.map((filter) => paginate(url, filter, { ...opts, onEvent: (ev) => emit(ev, url) }))
+  ));
+  return count;
 }
 
 /**
@@ -655,6 +694,30 @@ export async function outboxQuery(seedRelays, filters, opts = {}) {
     for (const ev of evs) if (ev && ev.id && !seen.has(ev.id)) seen.set(ev.id, ev);
   }));
   return finalize(seen, filterArr, true);
+}
+
+/**
+ * Outbox-routed streaming query: the outbox sibling of queryStream(). Routes the
+ * filter(s) to each author's write relays (author-less filters go to the seeds),
+ * then calls onEvent(event, url) for each event as it is de-duped across the
+ * routed relays, retaining only ids. Same streaming contract as queryStream
+ * (arrival order, no cross-relay union cap). Resolves with the unique count.
+ * @returns {Promise<number>}
+ */
+export async function outboxQueryStream(seedRelays, filters, onEvent, opts = {}) {
+  const filterArr = Array.isArray(filters) ? filters : [filters];
+  const routed = await routeByOutbox(seedRelays, filterArr, opts);
+  const seen = new Set();
+  let count = 0;
+  const emit = (ev, url) => {
+    if (!ev || !ev.id || seen.has(ev.id)) return;
+    seen.add(ev.id); count++;
+    try { onEvent(ev, url); } catch { /* a bad handler must not abort the sweep */ }
+  };
+  await Promise.all([...routed].flatMap(([url, fs]) =>
+    fs.map((filter) => paginate(url, filter, { ...opts, onEvent: (ev) => emit(ev, url) }))
+  ));
+  return count;
 }
 
 /**

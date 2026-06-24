@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Amy — a self-building Nostr client (static browser app). Node is used only for tests/benchmarks; the app itself has no build step.",
   "scripts": {
-    "test": "node bench/relay-pool.bench.mjs && node bench/completeness.bench.mjs",
-    "bench": "node --expose-gc bench/relay-pool.bench.mjs && node --expose-gc bench/completeness.bench.mjs"
+    "test": "node bench/relay-pool.bench.mjs && node bench/completeness.bench.mjs && node bench/stream.bench.mjs",
+    "bench": "node --expose-gc bench/relay-pool.bench.mjs && node --expose-gc bench/completeness.bench.mjs && node --expose-gc bench/stream.bench.mjs"
   }
 }
