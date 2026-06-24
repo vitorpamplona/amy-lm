@@ -31,7 +31,7 @@
   --border: #2a3040;
   --border-soft: #232936;
   --text: #e8eaf1;
-  --muted: #939bb0;
+  --muted: #aab2c8;
   --danger: #f0565b;
   --danger-bg: #2a1416;
   --danger-text: #ffb3b6;
@@ -44,6 +44,8 @@
 /* ---- Light ---- */
 :root[data-theme="light"] {
   color-scheme: light;
+  --accent: #c47215;
+  --accent-strong: #d4820f;
   --bg: #f4f6fa;
   --bg-grad: radial-gradient(1200px 600px at 100% -10%, #e9edf6 0%, transparent 60%),
              radial-gradient(900px 500px at -10% 110%, #eef0fb 0%, transparent 55%);
