@@ -186,20 +186,45 @@ console.log('\nScenario B — a fully-drained network reports complete');
 }
 
 // ===========================================================================
-// Scenario C — characterize the dense-same-second skip against real paginate().
-// (Not a self-check the view can do at runtime; documented so a fix is noticed.)
+// Scenario C — page-boundary events at a shared second are RECOVERED.
+// A second whose events straddle the relay's page edge used to be skipped
+// (until = oldest - 1). Inclusive paging must now recover them in full.
 // ===========================================================================
-console.log('\nScenario C — dense same-second page-boundary loss (characterization)');
+console.log('\nScenario C — boundary-straddling same-second events are recovered');
 {
-  const TOTAL = 250; // all sharing ONE timestamp, page cap 100, no limit
+  const evs = [];
+  // 96 events at distinct seconds (fill most of the first page)…
+  for (let i = 0; i < 96; i++) evs.push({ id: `s-${i}`, pubkey: 'p', kind: 1, created_at: now - 1 - i, tags: [], content: '', sig: '' });
+  // …then 8 events sharing ONE second that the 100-event page cap cuts through…
+  const B = now - 1 - 96;
+  for (let i = 0; i < 8; i++) evs.push({ id: `b-${i}`, pubkey: 'p', kind: 1, created_at: B, tags: [], content: '', sig: '' });
+  // …then 50 older distinct-second events.
+  for (let i = 0; i < 50; i++) evs.push({ id: `o-${i}`, pubkey: 'p', kind: 1, created_at: B - 1 - i, tags: [], content: '', sig: '' });
+  const TOTAL = 96 + 8 + 50; // 154
+  DB = new Map([['wss://straddle', evs]]); countable = new Map();
+
+  const got = await nostr.query(['wss://straddle'], { since, limit: 100000 });
+  const ids = new Set(got.map((e) => e.id));
+  const boundaryGot = [...Array(8).keys()].filter((i) => ids.has(`b-${i}`)).length;
+  console.log(`  ${TOTAL} events (8 share one second across the page edge), page cap ${PAGE_CAP} -> downloaded ${got.length}, boundary-second got ${boundaryGot}/8`);
+  check('every event is recovered (no boundary skip)', () => assert.equal(got.length, TOTAL));
+  check('all 8 boundary-second events present', () => assert.equal(boundaryGot, 8));
+}
+
+// ===========================================================================
+// Scenario D — inherent NIP-01 limit: a single second denser than the relay's
+// page cap can't be fully paged by ANY until-cursor. The fix must still
+// terminate (not loop) and surface exactly one page from that second.
+// ===========================================================================
+console.log('\nScenario D — a single over-full second is bounded, not looping');
+{
+  const TOTAL = 250; // all sharing ONE timestamp; page cap 100
   DB = new Map([['wss://dense', Array.from({ length: TOTAL }, (_, i) => ({ id: `d-${i}`, pubkey: 'p', kind: 1, created_at: now - 100, tags: [], content: '', sig: '' }))]]);
   countable = new Map();
   const got = await nostr.query(['wss://dense'], { since, limit: 100000 });
-  const lost = TOTAL - got.length;
-  console.log(`  ${TOTAL} events at one timestamp, page cap ${PAGE_CAP} -> downloaded ${got.length}, lost ${lost}`);
-  check('dense-second skip is bounded to one page (documents current behavior)', () => {
-    assert.equal(got.length, PAGE_CAP, 'expected exactly one page to survive the same-second cursor step');
-    assert.ok(lost > 0, 'this scenario must actually lose events');
+  console.log(`  ${TOTAL} events at one timestamp, page cap ${PAGE_CAP} -> downloaded ${got.length} (overflow of ${TOTAL - got.length} is unreachable via NIP-01)`);
+  check('terminates with exactly one page from the saturated second', () => {
+    assert.equal(got.length, PAGE_CAP);
   });
 }
 

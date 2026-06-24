@@ -254,10 +254,13 @@ function reqOnce(url, filterArr, opts = {}) {
  * expect it filled; they won't drive the cursor themselves, so we do it.
  *
  * We walk a `until` cursor backwards in time: fetch a round, set the next
- * `until` to the oldest event's created_at minus one second, fetch again, and
- * accumulate de-duplicated events. Each round asks only for what's still needed
+ * `until` to the oldest event's created_at — INCLUSIVE — fetch again, and
+ * accumulate de-duplicated events (by id). Paging inclusively re-requests the
+ * boundary second, so events that share the page's oldest timestamp but spilled
+ * just past the relay's page limit are still picked up next round; the id de-dup
+ * drops the ones we re-see. Each round asks only for what's still needed
  * (limit = remaining), so a relay capping at 500 fills a limit:2000 request in
- * four rounds. We stop when:
+ * a few rounds. We stop when:
  *   - a round adds zero new events (the relay has nothing older to give), or
  *   - we've collected the filter's `limit`, or
  *   - the cursor drops below the filter's `since` (walked out the bottom of the
@@ -268,9 +271,11 @@ function reqOnce(url, filterArr, opts = {}) {
  * NIP-50 search filters are relevance-ranked, not time-ranked, so until-paging
  * would scramble them; those (and opts.paginate === false) do a single round.
  *
- * The `-1` on the cursor guarantees forward progress, at the cost of possibly
- * skipping events sharing the oldest event's exact second that fell outside the
- * relay's page — an accepted trade to avoid looping on dense timestamps.
+ * Inclusive paging can't loop: when a round adds nothing new because a SINGLE
+ * second holds more events than the relay will page at once (so the inclusive
+ * re-request keeps returning the same ids), we detect that saturated second and
+ * step the cursor strictly below it. Only that second's overflow is then lost —
+ * it is unreachable via NIP-01 time paging on that relay, the one inherent gap.
  */
 async function paginate(url, filter, opts = {}) {
   const singleRound = opts.paginate === false || !!filter.search;
@@ -290,19 +295,35 @@ async function paginate(url, filter, opts = {}) {
     if (until === undefined) delete f.until; else f.until = until;
     if (remaining !== undefined) f.limit = remaining;
     const evs = await reqOnce(url, [f], opts);
-    // Count and advance the cursor on NEWLY-SEEN events only. A relay that
-    // re-sends the same page every round (ignoring `until`) then yields zero new
-    // events, which stops us — instead of looping forever on repeats.
-    let added = 0, oldest = Infinity;
+    // Count NEWLY-SEEN events and track the time span of the WHOLE page (dups
+    // included). The span reveals when a single saturated second is pinning the
+    // inclusive cursor, so we can step past it instead of re-requesting forever.
+    let added = 0, pageMin = Infinity, pageMax = -Infinity;
     for (const ev of evs) {
-      if (ev.id && !collected.has(ev.id)) {
+      const ts = ev && typeof ev.created_at === 'number' ? ev.created_at : undefined;
+      if (ts !== undefined) { if (ts < pageMin) pageMin = ts; if (ts > pageMax) pageMax = ts; }
+      if (ev && ev.id && !collected.has(ev.id)) {
         collected.set(ev.id, ev); added++;
-        if (typeof ev.created_at === 'number' && ev.created_at < oldest) oldest = ev.created_at;
         if (onEvent && !aborted()) onEvent(ev);
       }
     }
-    if (singleRound || added === 0 || oldest === Infinity) break;
-    until = oldest - 1;                               // walk strictly older
+    if (singleRound) break;
+
+    if (added > 0) {
+      // Walk to the page's oldest second INCLUSIVELY, so events sharing it that
+      // fell past the relay's page edge are recovered next round (de-dup drops
+      // the repeats). A page with no usable timestamps can't be paged further.
+      if (!Number.isFinite(pageMin)) break;
+      until = pageMin;
+    } else if (evs.length && pageMin === pageMax && pageMin === until) {
+      // Zero new events AND the whole page is one second equal to the cursor:
+      // that second holds more events than the relay pages at once, so the rest
+      // is unreachable. Step strictly below it to keep making progress.
+      until = pageMin - 1;
+    } else {
+      break; // relay is exhausted (or re-sending/ignoring `until`) — stop
+    }
+
     if (since !== undefined && until < since) break;  // past the window's start
     if (unbounded && round + 1 >= maxPages) {         // safety net for "everything"
       console.warn(`nostr.query: stopped paginating ${url} after ${maxPages} pages; set a limit/since or raise opts.maxPages`);
