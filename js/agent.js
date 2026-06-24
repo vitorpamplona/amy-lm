@@ -54,7 +54,8 @@ api surface:
 - api.el(tag, props?, children?) -> element. props: { class, text, style:{}, onClick, ...attrs }. children: node | string | array.
 - api.timeAgo(unixSeconds) -> "5m ago"
 - api.getState() / api.setState(obj) -> small per-view persisted state (survives reloads).
-- api.agent(prompt, opts?) -> Promise<string> — call the LLM from inside a view to process data it has already fetched. Returns the model's text response. Use this for tasks like summarizing a batch of posts, classifying events, or generating a narrative from structured data. opts.system overrides the default system prompt ('You are a helpful assistant.') when you need a specific persona or format.
+- api.agent(prompt, opts?) -> Promise<string> — call the LLM from inside a view to process data it has already fetched. **Returns markdown text.** Use this for tasks like summarizing a batch of posts, classifying events, or generating a narrative from structured data. opts.system overrides the default system prompt ('You are a helpful assistant.') when you need a specific persona or format. Always render the result with api.md() rather than setting it as plain text.
+- api.md(markdownText) -> HTMLElement — convert a markdown string to a rendered DOM element (<div class="md">). Use this whenever you display api.agent() output: `root.append(api.md(await api.agent(...)))`. Handles headings, bold, italic, inline code, fenced code blocks, ordered and unordered lists, blockquotes, horizontal rules, and links.
 
 Guidance:
 - Write self-contained, defensive code. Show a loading state, then render. Catch errors and show them in 'root'.
