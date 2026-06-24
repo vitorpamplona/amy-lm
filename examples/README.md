@@ -43,3 +43,27 @@ de-dup, and bounded retained memory — and prints a metrics report:
 npm test          # run the checks (exit non-zero on regression)
 npm run bench     # same, with a GC-stable heap-delta number
 ```
+
+### Are we missing events?
+
+Efficiency is not completeness. Two things make this view silently *undercount*
+on a real network, both confirmed against `js/nostr.js`:
+
+1. **Per-relay `limit` (`PER_RELAY_LIMIT`)** — a relay with more in-window
+   events than the limit returns only the newest `limit`; the rest are dropped.
+   On a busy relay a 7-day window is far more than 400 events, so this is the
+   dominant gap.
+2. **Dense same-second skip** — pagination advances by whole seconds, so events
+   sharing one `created_at` across a relay page boundary can be skipped.
+
+The view answers "are we missing events?" at runtime with a **completeness
+check** (third card): any relay that returns *exactly* the limit is the tell
+that it was truncated, and the view confirms the gap size with a NIP-45 `COUNT`
+probe on just those suspects. The result is shown as a ⚠ in the status line, a
+lower-bound count of missed events, and a per-relay "missing events" chart.
+
+[`bench/completeness.bench.mjs`](../bench/completeness.bench.mjs) verifies that
+detection: it stands up relays bigger than the limit (some without `COUNT`
+support) and asserts the check flags exactly the truncated ones, quantifies the
+gap, leaves a fully-drained network unflagged, and it characterizes the
+dense-second loss against the real `paginate()`.

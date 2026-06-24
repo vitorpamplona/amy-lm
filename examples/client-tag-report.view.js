@@ -39,6 +39,10 @@ const CONCURRENCY = 10;      // relays queried at once (socket / memory budget)
 const RELAY_TIMEOUT = 5000;  // per-relay idle timeout (ms)
 const TOP_CLIENTS = 30;      // max client bars to draw
 const TOP_RELAYS = 50;       // max relay bars to draw
+const VERIFY = true;         // after the crawl, cross-check coverage: relays that
+                             // returned the full limit are probed with NIP-45
+                             // COUNT to estimate how many events we did NOT fetch
+const TOP_GAPS = 20;         // max truncated-relay bars to draw
 
 const now = Math.floor(Date.now() / 1000);
 const since = now - DAYS * 86400;
@@ -101,6 +105,7 @@ try {
   const clientCounts = new Map();  // client name -> deduped event count
   const perRelay = new Map();      // relay url -> unique events it returned
   const queried = new Set();       // relays we've started a query against
+  const hitLimit = new Set();      // relays that returned the FULL limit (suspect truncated)
 
   // Seed the pool, respecting the cap.
   let frontier = [];
@@ -122,8 +127,10 @@ try {
         perRelay.set(url, 0); doneRelays++; return;
       }
       // queryAt already de-dupes by id within this relay, so evs.length is the
-      // relay's unique-event count.
+      // relay's unique-event count. Returning the FULL limit is the tell that
+      // the relay had more in-window events than we fetched (see completeness).
       perRelay.set(url, evs.length);
+      if (evs.length >= PER_RELAY_LIMIT) hitLimit.add(url);
 
       for (const ev of evs) {
         const id = ev && ev.id;
@@ -165,8 +172,37 @@ try {
     .map(([url, value]) => ({ label: url.replace(/^wss?:\/\//, ''), value }))
     .sort((a, b) => b.value - a.value);
 
+  // ---- completeness check -------------------------------------------------
+  // Are we missing events? The per-relay `limit` (and a relay's own page cap)
+  // mean a busy relay can hold MORE in-window events than we downloaded. A relay
+  // that returned EXACTLY the limit is the tell. We confirm the gap with NIP-45
+  // COUNT on just those suspects (cheap — COUNT reports a relay's total without
+  // downloading it; relays that don't implement it simply can't be verified).
+  const gaps = [];          // { url, downloaded, reported, missing }
+  let unverifiable = 0;     // hit the limit but COUNT unsupported -> gap size unknown
+  if (VERIFY && hitLimit.size) {
+    const suspects = [...hitLimit];
+    const reported = new Array(suspects.length).fill(0);
+    setStatus(`Verifying coverage of ${suspects.length} relay(s) that returned the full limit…`);
+    await mapPool(suspects, CONCURRENCY, async (url, i) => {
+      try { reported[i] = await api.countAt([url], FILTER, { timeout: RELAY_TIMEOUT }); }
+      catch { reported[i] = 0; }
+    });
+    suspects.forEach((url, i) => {
+      const downloaded = perRelay.get(url) || 0;
+      const rep = reported[i] || 0;
+      if (rep > downloaded) gaps.push({ url, downloaded, reported: rep, missing: rep - downloaded });
+      else if (rep === 0) unverifiable++;            // COUNT unsupported on this relay
+    });
+    gaps.sort((a, b) => b.missing - a.missing);
+  }
+  const missingTotal = gaps.reduce((s, g) => s + g.missing, 0);
+  const verdict = hitLimit.size
+    ? ` · ⚠ ${hitLimit.size} relay(s) likely truncated${missingTotal ? ` (≥${missingTotal.toLocaleString()} events missed)` : ''}`
+    : '';
+
   out.innerHTML = '';
-  setStatus(`Done · ${queried.size} relays reached out to · ${seen.size.toLocaleString()} unique events · ${withClient.toLocaleString()} carried a client tag`);
+  setStatus(`Done · ${queried.size} relays reached out to · ${seen.size.toLocaleString()} unique events · ${withClient.toLocaleString()} carried a client tag${verdict}`);
 
   if (!seen.size) {
     out.append(card([
@@ -197,6 +233,24 @@ try {
       + (relayRows.length > TOP_RELAYS ? ` · showing top ${TOP_RELAYS}` : ''),
     )),
     barChart(shownRelays),
+  ]));
+
+  // Card 3 — completeness: did we actually get every event in the window?
+  const complete = !hitLimit.size;
+  out.append(card([
+    heading('Completeness check — are we missing events?'),
+    complete
+      ? muted(`✓ No truncation detected. Every relay returned fewer than the per-relay limit (${PER_RELAY_LIMIT}), so the ${DAYS}-day window was fully drained on each — the counts above are complete (modulo any NIP-42 relays that returned nothing).`)
+      : el('div', {}, [
+          muted(`⚠ ${hitLimit.size} relay(s) returned the full per-relay limit (${PER_RELAY_LIMIT}) and almost certainly hold MORE in-window events than were counted.`),
+          gaps.length
+            ? el('div', { style: { marginTop: '6px' } }, muted(`NIP-45 COUNT confirms ≥ ${missingTotal.toLocaleString()} events were NOT downloaded across ${gaps.length} relay(s) — so every count above is a LOWER BOUND.`))
+            : muted('Their COUNT support is missing, so the gap size could not be measured.'),
+          unverifiable ? el('div', { style: { marginTop: '6px' } }, muted(`${unverifiable} suspect relay(s) don't support NIP-45 COUNT and couldn't be verified.`)) : null,
+          el('div', { style: { marginTop: '8px' } }, muted('To close the gap: raise PER_RELAY_LIMIT, or drop the limit so the crawl pages the whole window by `since` (heavier, but complete).')),
+          gaps.length ? el('div', { style: { marginTop: '10px' } }, barChart(gaps.slice(0, TOP_GAPS).map((g) => ({ label: g.url.replace(/^wss?:\/\//, ''), value: g.missing })))) : null,
+        ]),
+    el('div', { style: { marginTop: '10px' } }, muted('Caveat not covered by this check: events sharing one exact timestamp across a relay page boundary can also be skipped (pagination steps by whole seconds), so very high-rate relays may lose a few more.')),
   ]));
 } catch (err) {
   out.innerHTML = '';
