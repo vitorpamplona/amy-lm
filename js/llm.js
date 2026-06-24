@@ -41,6 +41,86 @@ const MAX_STEPS = 16; // safety valve against runaway tool loops
  * @param {(name:string, input:object) => void} [args.onToolUse] - notified before a tool runs
  * @returns {Promise<Array>} the updated messages array
  */
+/**
+ * One-shot text completion — no tools, no loop. For in-view LLM calls like
+ * summarization where you already have the data and just need a text response.
+ *
+ * @param {object} args
+ * @param {string} args.apiKey
+ * @param {string} [args.provider]
+ * @param {string} [args.baseUrl]
+ * @param {string} args.model
+ * @param {string} args.system
+ * @param {string} args.prompt
+ * @returns {Promise<string>}
+ */
+export async function complete({ apiKey, provider: explicitProvider, baseUrl, model, system, prompt }) {
+  const provider = explicitProvider || detectProvider(apiKey, baseUrl);
+  if (provider === 'openai-compatible') {
+    const base = normalizeBaseUrl(baseUrl);
+    if (!base) throw new Error('No base URL set — open Settings to point Amy at your OpenAI-compatible endpoint.');
+    return completeOpenAI({ apiKey, model, system, prompt, endpoint: `${base}/chat/completions` });
+  }
+  if (!apiKey) throw new Error('No API key set — open Settings to connect Claude, OpenAI, or Gemini.');
+  if (provider === 'google') return completeGemini({ apiKey, model, system, prompt });
+  if (provider === 'openai') return completeOpenAI({ apiKey, model, system, prompt });
+  return completeAnthropic({ apiKey, model, system, prompt });
+}
+
+async function completeAnthropic({ apiKey, model, system, prompt }) {
+  const res = await fetch(ANTHROPIC_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': ANTHROPIC_VERSION,
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: model || 'claude-opus-4-8',
+      max_tokens: 4096,
+      system,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Anthropic API ${res.status}: ${(await errorDetail(res)) || res.statusText}`);
+  const data = await res.json();
+  return (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+}
+
+async function completeOpenAI({ apiKey, model, system, prompt, endpoint }) {
+  const headers = { 'content-type': 'application/json' };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  const res = await fetch(endpoint || OPENAI_ENDPOINT, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model: model || 'gpt-4o',
+      max_completion_tokens: 4096,
+      messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
+    }),
+  });
+  if (!res.ok) throw new Error(`OpenAI API ${res.status}: ${(await errorDetail(res)) || res.statusText}`);
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
+async function completeGemini({ apiKey, model, system, prompt }) {
+  const url = `${GEMINI_BASE}/models/${model || 'gemini-2.5-pro'}:generateContent`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: system }] },
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { maxOutputTokens: 4096 },
+    }),
+  });
+  if (!res.ok) throw new Error(`Gemini API ${res.status}: ${(await errorDetail(res)) || res.statusText}`);
+  const data = await res.json();
+  return (data.candidates?.[0]?.content?.parts || []).filter((p) => p.text).map((p) => p.text).join('');
+}
+
 export async function converse(args) {
   const provider = args.provider || detectProvider(args.apiKey, args.baseUrl);
   if (provider === 'openai-compatible') {

@@ -54,6 +54,7 @@ api surface:
 - api.el(tag, props?, children?) -> element. props: { class, text, style:{}, onClick, ...attrs }. children: node | string | array.
 - api.timeAgo(unixSeconds) -> "5m ago"
 - api.getState() / api.setState(obj) -> small per-view persisted state (survives reloads).
+- api.agent(prompt, opts?) -> Promise<string> — call the LLM from inside a view to process data it has already fetched. Returns the model's text response. Use this for tasks like summarizing a batch of posts, classifying events, or generating a narrative from structured data. opts.system overrides the default system prompt ('You are a helpful assistant.') when you need a specific persona or format.
 
 Guidance:
 - Write self-contained, defensive code. Show a loading state, then render. Catch errors and show them in 'root'.
