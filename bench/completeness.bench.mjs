@@ -212,9 +212,7 @@ console.log('\nScenario C — boundary-straddling same-second events are recover
 }
 
 // ===========================================================================
-// Scenario D — inherent NIP-01 limit: a single second denser than the relay's
-// page cap can't be fully paged by ANY until-cursor. The fix must still
-// terminate (not loop) and surface exactly one page from that second.
+// Scenario D — a single over-full second is bounded, not looping.
 // ===========================================================================
 console.log('\nScenario D — a single over-full second is bounded, not looping');
 {
@@ -226,6 +224,58 @@ console.log('\nScenario D — a single over-full second is bounded, not looping'
   check('terminates with exactly one page from the saturated second', () => {
     assert.equal(got.length, PAGE_CAP);
   });
+}
+
+// ===========================================================================
+// Scenario E — over-full second WITH older events: the saturated second must
+// not swallow the cursor; every event older than it is still retrieved.
+// ===========================================================================
+console.log('\nScenario E — older events below an over-full second are still retrieved');
+{
+  const T = now - 100;
+  const dense = Array.from({ length: 250 }, (_, i) => ({ id: `x-${i}`, pubkey: 'p', kind: 1, created_at: T, tags: [], content: '', sig: '' }));
+  const older = Array.from({ length: 120 }, (_, i) => ({ id: `y-${i}`, pubkey: 'p', kind: 1, created_at: T - 1 - i, tags: [], content: '', sig: '' }));
+  DB = new Map([['wss://mixed', [...dense, ...older]]]); countable = new Map();
+  const got = await nostr.query(['wss://mixed'], { since, limit: 100000 });
+  const olderGot = got.filter((e) => e.id.startsWith('y-')).length;
+  console.log(`  250 at one second + 120 older, page cap ${PAGE_CAP} -> downloaded ${got.length} (${olderGot}/120 older)`);
+  check('all 120 older events are retrieved past the saturated second', () => assert.equal(olderGot, 120));
+  check('saturated second contributes exactly one page', () => assert.equal(got.length, PAGE_CAP + 120));
+}
+
+// ===========================================================================
+// Scenario F — adversarial relay: returns a DIFFERENT page of same-second
+// events on every REQ. Must still terminate (step-down is on page shape, not
+// novelty). A hard REQ cap in the mock turns a regression into a failed assert
+// instead of an infinite hang.
+// ===========================================================================
+console.log('\nScenario F — a relay that never repeats a same-second page cannot loop');
+{
+  const T = now - 100;
+  let served = 0;
+  const HARD_CAP = 200; // if paging loops, the mock stops feeding and we assert below
+  // Custom mock: each REQ at this relay returns a fresh, all-distinct page of
+  // events at the SAME second T, never an EOSE-implied "exhausted" signal.
+  class Adversary extends MockWebSocket {
+    send(data) {
+      let msg; try { msg = JSON.parse(data); } catch { return; }
+      const [verb, subId] = msg;
+      if (verb === 'CLOSE') return;
+      if (verb !== 'REQ') return;
+      const page = [];
+      if (served < HARD_CAP) for (let i = 0; i < PAGE_CAP; i++) page.push({ id: `adv-${served * PAGE_CAP + i}`, pubkey: 'p', kind: 1, created_at: T, tags: [], content: '', sig: '' });
+      served++;
+      setTimeout(() => { for (const e of page) this._emit('message', { data: JSON.stringify(['EVENT', subId, e]) }); this._emit('message', { data: JSON.stringify(['EOSE', subId]) }); }, 0);
+    }
+  }
+  const realWS = globalThis.WebSocket;
+  globalThis.WebSocket = class extends Adversary {};
+  const got = await nostr.query(['wss://adversary'], { since, limit: 100000 });
+  globalThis.WebSocket = realWS;
+  console.log(`  adversary served ${served} page(s); downloaded ${got.length}`);
+  check('query terminates (does not exhaust the hard cap)', () => assert.ok(served < HARD_CAP, `served ${served} pages — looks like a loop`));
+  check('step-down is bounded to a couple of REQs', () => assert.ok(served <= 3, `served ${served} pages`));
+  check('only the newest same-second page is kept', () => assert.equal(got.length, PAGE_CAP));
 }
 
 console.log(failed ? `\n${failed} check(s) FAILED\n` : '\nAll completeness checks passed.\n');

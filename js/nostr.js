@@ -271,11 +271,14 @@ function reqOnce(url, filterArr, opts = {}) {
  * NIP-50 search filters are relevance-ranked, not time-ranked, so until-paging
  * would scramble them; those (and opts.paginate === false) do a single round.
  *
- * Inclusive paging can't loop: when a round adds nothing new because a SINGLE
- * second holds more events than the relay will page at once (so the inclusive
- * re-request keeps returning the same ids), we detect that saturated second and
- * step the cursor strictly below it. Only that second's overflow is then lost —
- * it is unreachable via NIP-01 time paging on that relay, the one inherent gap.
+ * Inclusive paging can't loop: whenever a whole page comes back at a SINGLE
+ * second equal to the cursor — a second holding more events than the relay will
+ * page at once, so re-requesting `<= until` just repeats it — we step the cursor
+ * strictly below that second. This holds even against a relay that returns a
+ * different page of same-second events each time (it would otherwise pin us),
+ * because we step down on the shape of the page, not on whether it was new. Only
+ * that second's overflow is lost — unreachable via NIP-01 time paging on that
+ * relay (filters can't exclude seen ids), the one inherent gap.
  */
 async function paginate(url, filter, opts = {}) {
   const singleRound = opts.paginate === false || !!filter.search;
@@ -309,19 +312,25 @@ async function paginate(url, filter, opts = {}) {
     }
     if (singleRound) break;
 
-    if (added > 0) {
-      // Walk to the page's oldest second INCLUSIVELY, so events sharing it that
-      // fell past the relay's page edge are recovered next round (de-dup drops
-      // the repeats). A page with no usable timestamps can't be paged further.
+    // A page that is ENTIRELY one second, and that second is the cursor (or the
+    // cursor is still open, so this is the newest second with nothing above it):
+    // the relay has handed us its whole page for that second, so any remaining
+    // events at it are beyond the page and unreachable (NIP-01 can't exclude ids
+    // we've already seen), and nothing older came back. Step STRICTLY below it —
+    // re-requesting the same second returns the same page, and a misbehaving
+    // relay that returned a DIFFERENT page each time would otherwise pin the
+    // cursor here forever. Checked before `added` so it holds even then.
+    if (evs.length && pageMin === pageMax && (until === undefined || pageMin === until)) {
+      until = pageMin - 1;
+    } else if (added > 0) {
+      // Otherwise walk to the page's oldest second INCLUSIVELY, so events
+      // sharing that second that fell past the relay's page edge are recovered
+      // next round (de-dup drops the repeats). A page with no usable timestamps
+      // can't be paged further.
       if (!Number.isFinite(pageMin)) break;
       until = pageMin;
-    } else if (evs.length && pageMin === pageMax && pageMin === until) {
-      // Zero new events AND the whole page is one second equal to the cursor:
-      // that second holds more events than the relay pages at once, so the rest
-      // is unreachable. Step strictly below it to keep making progress.
-      until = pageMin - 1;
     } else {
-      break; // relay is exhausted (or re-sending/ignoring `until`) — stop
+      break; // no new events on a multi-second page -> relay exhausted (or re-sending)
     }
 
     if (since !== undefined && until < since) break;  // past the window's start
