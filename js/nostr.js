@@ -283,7 +283,10 @@ function reqOnce(url, filterArr, opts = {}) {
       // not pollute results or pagination. Still bump on any message — the relay
       // is alive and working, so don't let unmatched noise trip the idle timer.
       onEvent: (ev) => { if (match(ev)) events.push(ev); bump(); },
-      onEose: finish,
+      // Some relays send a silent empty EOSE instead of CLOSED auth-required when
+      // the client is not yet authenticated. If a NIP-42 handshake is in flight,
+      // hold the sub open so resendActiveSubs() can replay it once OK arrives.
+      onEose: () => { ws._authInFlight ? bump(AUTH_GRACE_MS) : finish(); },
       filters: filterArr, // kept so a NIP-42 auth-required REQ can be replayed
       bump,               // lets the NIP-42 handshake hold the idle clock open
     });
@@ -593,7 +596,8 @@ export async function count(relays, filters, opts = {}) {
     try { ws = connect(url); } catch { return finish(); }
     ws._subs.set(subId, {
       onCount: (n) => { if (typeof n === 'number' && n > max) max = n; finish(); },
-      onEose: finish, // a CLOSED (e.g. unsupported / auth refused) ends this relay
+      // Same silent-EOSE guard as reqOnce: hold open if auth is in flight.
+      onEose: () => { ws._authInFlight ? bump(AUTH_GRACE_MS) : finish(); },
       filters: filterArr, // kept so a NIP-42 auth-required COUNT can be replayed
       verb: 'COUNT',
       bump,               // lets the NIP-42 handshake hold the idle clock open
