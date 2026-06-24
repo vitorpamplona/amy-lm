@@ -358,62 +358,80 @@ function finalize(seen, filterArr, sortDesc) {
 }
 
 /**
- * One-shot query across relays, auto-paginated per relay (see paginate) so apps
- * get the `limit` / time window they asked for even when relays cap a single
- * REQ. Resolves with a de-duplicated array of events. Sorted newest-first by
- * default; pass opts.sort === false to keep arrival order — NIP-50 search
- * relays return relevance order, which a time sort would lose.
- * @param {string[]} relays
- * @param {object|object[]} filters - NIP-01 filter(s)
- * @param {object} [opts] - { timeout=4000 (idle ms), maxPages=25, paginate=true, sort }
+ * Shared fan-out core for query / outboxQuery (and their streaming forms).
+ * Paginates every [url, filters[]] pair in parallel — each relay walks its own
+ * cursor — de-dups across them by id, and runs every event through `emit`. Two
+ * modes, picked by opts.buffer:
+ *   - buffered (default): collect events into a Map, return finalize()'d array
+ *     (sorted, union-capped). This is the classic query() result.
+ *   - streaming (opts.buffer === false): keep only a Set of ids, never the
+ *     events, and return the unique count — for emit-and-discard sweeps.
+ * In BOTH modes, opts.onEvent(event, url) (if given) fires for each de-duped
+ * event the moment it lands, so a caller can process incrementally; a throw
+ * from it is swallowed so one bad event can't abort the run.
+ * @param {Array<[string, object[]]>} pairs
+ * @returns {Promise<object[]|number>} array when buffered, else the unique count
  */
-export async function query(relays, filters, opts = {}) {
-  const filterArr = Array.isArray(filters) ? filters : [filters];
-  const seen = new Map(); // id -> event
-  const collect = (ev) => { if (ev && ev.id && !seen.has(ev.id)) seen.set(ev.id, ev); };
-  // Paginate every (relay, filter) pair independently and in parallel; each
-  // relay walks its own cursor since its oldest event differs from the others'.
-  // paginate streams each new event to onEvent; we collect them into `seen`.
-  await Promise.all(relays.flatMap((url) =>
-    filterArr.map((filter) => paginate(url, filter, { ...opts, onEvent: collect }))
+async function fanout(pairs, filterArr, opts, sortDesc) {
+  const buffer = opts.buffer !== false;
+  const onEvent = opts.onEvent;
+  const seenMap = buffer ? new Map() : null; // id -> event (buffered)
+  const seenIds = buffer ? null : new Set(); // ids only (streaming)
+  let count = 0;
+  const emit = (ev, url) => {
+    if (!ev || !ev.id) return;
+    if (buffer) { if (seenMap.has(ev.id)) return; seenMap.set(ev.id, ev); }
+    else { if (seenIds.has(ev.id)) return; seenIds.add(ev.id); }
+    count++;
+    if (onEvent) { try { onEvent(ev, url); } catch { /* a bad handler must not abort the run */ } }
+  };
+  await Promise.all(pairs.flatMap(([url, fs]) =>
+    fs.map((filter) => paginate(url, filter, { ...opts, onEvent: (ev) => emit(ev, url) }))
   ));
-  return finalize(seen, filterArr, opts.sort !== false);
+  return buffer ? finalize(seenMap, filterArr, sortDesc) : count;
 }
 
 /**
- * Streaming one-shot query: like query(), but instead of resolving with an
- * array it calls onEvent(event, url) for EACH event the moment it is de-duped
- * across relays — holding only a Set of seen ids, never the events — so the
- * caller can process and discard each one without the whole result set living
- * in memory. Built for big network-wide sweeps over hundreds of relays.
+ * One-shot query across relays, auto-paginated per relay (see paginate) so apps
+ * get the `limit` / time window they asked for even when relays cap a single
+ * REQ. Resolves with a de-duplicated array of events, sorted newest-first by
+ * default (pass opts.sort === false to keep arrival order — NIP-50 search relays
+ * return relevance order, which a time sort would lose).
  *
- * Differences from query():
- *   - delivery is ARRIVAL order, not sorted (order is explicitly not promised);
- *   - each relay is still bounded by the filter's `limit` (and `since`/`until`),
- *     but there is NO cross-relay union cap — every de-duplicated event is
- *     emitted. Bound the work with `since` / a per-relay `limit`.
- * Resolves with the total count of unique events emitted, once every relay's
- * pagination has finished. A throw from onEvent is swallowed so one bad event
- * can't abort the sweep.
+ * Streaming hooks (shared with outboxQuery): pass opts.onEvent(event, url) to
+ * process each event as it is de-duped while STILL getting the final array; pass
+ * opts.buffer === false to NOT retain events and resolve with the unique count
+ * instead — the emit-and-discard mode (see queryStream for the tidy signature).
+ * @param {string[]} relays
+ * @param {object|object[]} filters - NIP-01 filter(s)
+ * @param {object} [opts] - { timeout=4000 (idle ms), maxPages=25, paginate=true, sort, onEvent, buffer }
+ * @returns {Promise<object[]|number>}
+ */
+export async function query(relays, filters, opts = {}) {
+  const filterArr = Array.isArray(filters) ? filters : [filters];
+  return fanout(relays.map((url) => [url, filterArr]), filterArr, opts, opts.sort !== false);
+}
+
+/**
+ * Streaming one-shot query — the emit-and-discard shorthand for
+ * query(relays, filters, { onEvent, buffer: false }). Calls onEvent(event, url)
+ * for each event the moment it is de-duped across relays, holding only a Set of
+ * ids (never the events), so a caller can process and discard each one without
+ * the whole result set living in memory. Built for big network-wide sweeps over
+ * hundreds of relays.
+ *
+ * Delivery is ARRIVAL order (not sorted), and each relay is still bounded by the
+ * filter's `limit` / `since`/`until`, but there is NO cross-relay union cap —
+ * every de-duplicated event is emitted, so bound the work with `since`/`limit`.
+ * Resolves with the total unique-event count once every relay's pagination ends.
  * @param {string[]} relays
  * @param {object|object[]} filters - NIP-01 filter(s)
  * @param {(event: object, url: string) => void} onEvent
  * @param {object} [opts] - same as query(): { timeout, maxPages, paginate }
  * @returns {Promise<number>}
  */
-export async function queryStream(relays, filters, onEvent, opts = {}) {
-  const filterArr = Array.isArray(filters) ? filters : [filters];
-  const seen = new Set(); // ids only — the whole point is to not retain events
-  let count = 0;
-  const emit = (ev, url) => {
-    if (!ev || !ev.id || seen.has(ev.id)) return;
-    seen.add(ev.id); count++;
-    try { onEvent(ev, url); } catch { /* a bad handler must not abort the sweep */ }
-  };
-  await Promise.all(relays.flatMap((url) =>
-    filterArr.map((filter) => paginate(url, filter, { ...opts, onEvent: (ev) => emit(ev, url) }))
-  ));
-  return count;
+export function queryStream(relays, filters, onEvent, opts = {}) {
+  return query(relays, filters, { ...opts, onEvent, buffer: false });
 }
 
 /**
@@ -681,43 +699,35 @@ async function routeByOutbox(seedRelays, filterArr, opts = {}) {
   return routed;
 }
 
-/** Outbox-routed one-shot query. Same return shape as query() — each routed
- *  relay is auto-paginated by the inner query(); the merged union is then capped
- *  to the original filter's limit (routing splits authors across relays, so the
- *  union can otherwise exceed it). */
+/**
+ * Outbox-routed one-shot query. Routes the filter(s) to each author's write
+ * relays (author-less filters go to the seeds), then runs the SAME fan-out core
+ * as query(): every routed relay is auto-paginated, the union is de-duped by id,
+ * and the result is capped to the original filter's limit (routing splits
+ * authors across relays, so the union can otherwise exceed it). Resolves with a
+ * de-duplicated array, newest-first.
+ *
+ * Same streaming hooks as query(): opts.onEvent(event, url) for incremental
+ * processing, opts.buffer === false for ids-only emit-and-discard (returns the
+ * unique count — see outboxQueryStream for the tidy signature).
+ * @returns {Promise<object[]|number>}
+ */
 export async function outboxQuery(seedRelays, filters, opts = {}) {
   const filterArr = Array.isArray(filters) ? filters : [filters];
   const routed = await routeByOutbox(seedRelays, filterArr, opts);
-  const seen = new Map();
-  await Promise.all([...routed].map(async ([url, fs]) => {
-    const evs = await query([url], fs, opts);
-    for (const ev of evs) if (ev && ev.id && !seen.has(ev.id)) seen.set(ev.id, ev);
-  }));
-  return finalize(seen, filterArr, true);
+  return fanout([...routed], filterArr, opts, true);
 }
 
 /**
- * Outbox-routed streaming query: the outbox sibling of queryStream(). Routes the
- * filter(s) to each author's write relays (author-less filters go to the seeds),
- * then calls onEvent(event, url) for each event as it is de-duped across the
- * routed relays, retaining only ids. Same streaming contract as queryStream
- * (arrival order, no cross-relay union cap). Resolves with the unique count.
+ * Outbox-routed streaming query — the emit-and-discard shorthand for
+ * outboxQuery(seeds, filters, { onEvent, buffer: false }). Routes like
+ * outboxQuery, then calls onEvent(event, url) for each event as it is de-duped
+ * across the routed relays, retaining only ids. Same streaming contract as
+ * queryStream (arrival order, no cross-relay union cap). Resolves with the count.
  * @returns {Promise<number>}
  */
-export async function outboxQueryStream(seedRelays, filters, onEvent, opts = {}) {
-  const filterArr = Array.isArray(filters) ? filters : [filters];
-  const routed = await routeByOutbox(seedRelays, filterArr, opts);
-  const seen = new Set();
-  let count = 0;
-  const emit = (ev, url) => {
-    if (!ev || !ev.id || seen.has(ev.id)) return;
-    seen.add(ev.id); count++;
-    try { onEvent(ev, url); } catch { /* a bad handler must not abort the sweep */ }
-  };
-  await Promise.all([...routed].flatMap(([url, fs]) =>
-    fs.map((filter) => paginate(url, filter, { ...opts, onEvent: (ev) => emit(ev, url) }))
-  ));
-  return count;
+export function outboxQueryStream(seedRelays, filters, onEvent, opts = {}) {
+  return outboxQuery(seedRelays, filters, { ...opts, onEvent, buffer: false });
 }
 
 /**

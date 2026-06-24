@@ -111,5 +111,36 @@ const obSeen = new Set();
 const obCount = await nostr.outboxQueryStream(relays, filter, (ev) => obSeen.add(ev.id));
 check('outboxQueryStream streams the same unique set (author-less -> seeds)', () => { assert.equal(obCount, EXPECT_UNIQUE); assert.equal(obSeen.size, qIds.size); });
 
+// 5) The streaming hooks are now integrated INTO query()/outboxQuery() too.
+console.log('  — integrated hooks on query()/outboxQuery() —');
+{
+  // query() with opts.onEvent: streams each de-duped event AND still returns the
+  // sorted, de-duplicated array.
+  const streamed = [];
+  const arr = await nostr.query(relays, filter, { onEvent: (ev) => streamed.push(ev.id) });
+  check('query(onEvent) returns the full sorted array', () => {
+    assert.equal(arr.length, EXPECT_UNIQUE);
+    for (let i = 1; i < arr.length; i++) assert.ok(arr[i - 1].created_at >= arr[i].created_at, 'not newest-first');
+  });
+  check('query(onEvent) also emitted every event once', () => {
+    assert.equal(streamed.length, EXPECT_UNIQUE);
+    assert.equal(new Set(streamed).size, EXPECT_UNIQUE);
+  });
+
+  // query() with buffer:false returns the count and no array (ids-only mode).
+  const c = await nostr.query(relays, filter, { buffer: false, onEvent: () => {} });
+  check('query(buffer:false) resolves with the unique count', () => assert.equal(c, EXPECT_UNIQUE));
+
+  // outboxQuery() gains the same hooks.
+  const obStreamed = [];
+  const obArr = await nostr.outboxQuery(relays, filter, { onEvent: (ev) => obStreamed.push(ev.id) });
+  check('outboxQuery(onEvent) returns the array and streams every event', () => {
+    assert.equal(obArr.length, EXPECT_UNIQUE);
+    assert.equal(obStreamed.length, EXPECT_UNIQUE);
+  });
+  const obC = await nostr.outboxQuery(relays, filter, { buffer: false, onEvent: () => {} });
+  check('outboxQuery(buffer:false) resolves with the unique count', () => assert.equal(obC, EXPECT_UNIQUE));
+}
+
 console.log(failed ? `\n${failed} check(s) FAILED\n` : '\nAll streaming checks passed.\n');
 process.exit(failed ? 1 : 0);
