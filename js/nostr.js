@@ -54,6 +54,12 @@ export const signer = {
 // ---------------------------------------------------------------------------
 const sockets = new Map(); // url -> WebSocket (kept warm and reused)
 
+// While a NIP-42 handshake is in flight a request's idle timer must not fire and
+// tear the subscription down — signing the kind 22242 event usually pops a NIP-07
+// approval prompt that takes longer than the normal idle window. Hold the sub
+// open this long instead, so the post-auth REQ replay actually lands.
+const AUTH_GRACE_MS = 30000;
+
 function connect(url) {
   let ws = sockets.get(url);
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return ws;
@@ -77,16 +83,24 @@ function connect(url) {
       if (w) { ws._authWaiters.delete(a); b ? w.resolve() : w.reject(new Error(data[3] || 'relay rejected AUTH')); }
       return;
     }
-    // CLOSED with "auth-required" means this request needs NIP-42 auth first. Try
-    // to authenticate, then replay the original request (REQ or COUNT); otherwise
-    // treat it as the stream's end.
+    // CLOSED with "auth-required" means this request needs NIP-42 auth first. The
+    // relay has dropped the subscription, so once we authenticate it will sit idle
+    // until we replay the original request (REQ or COUNT) — there is no automatic
+    // re-run on its end. Hold the sub's idle clock open across the signer prompt,
+    // resend the filter on confirmation, then resume normal idling. Otherwise treat
+    // it as the stream's end.
     if (type === 'CLOSED') {
       const sub = ws._subs.get(a);
       if (!sub) return;
       if (/^auth-required/i.test(String(b || '')) && ws._challenge && !sub._authTried) {
         sub._authTried = true;
+        sub.bump && sub.bump(AUTH_GRACE_MS); // don't idle out while the handshake runs
         authenticate(ws, url)
-          .then(() => { if (ws._subs.has(a)) { try { ws.send(JSON.stringify([sub.verb || 'REQ', a, ...sub.filters])); } catch {} } })
+          .then(() => {
+            if (!ws._subs.has(a)) return;
+            try { ws.send(JSON.stringify([sub.verb || 'REQ', a, ...sub.filters])); } catch {}
+            sub.bump && sub.bump(); // data should flow now — back to the normal idle window
+          })
           .catch(() => sub.onEose && sub.onEose());
       } else if (sub.onEose) {
         sub.onEose();
@@ -223,7 +237,7 @@ function reqOnce(url, filterArr, opts = {}) {
     const finish = () => { if (done) return; done = true; clearTimeout(idleTimer); cleanup(); resolve(events); };
     // (Re)start the idle countdown — on REQ send and on every event — so the
     // deadline only fires after a real pause in the stream.
-    const bump = () => { if (done) return; clearTimeout(idleTimer); idleTimer = setTimeout(finish, idle); };
+    const bump = (ms = idle) => { if (done) return; clearTimeout(idleTimer); idleTimer = setTimeout(finish, ms); };
     let ws, cleanup = () => {};
     try {
       ws = connect(url);
@@ -235,6 +249,7 @@ function reqOnce(url, filterArr, opts = {}) {
       onEvent: (ev) => { if (match(ev)) events.push(ev); bump(); },
       onEose: finish,
       filters: filterArr, // kept so a NIP-42 auth-required REQ can be replayed
+      bump,               // lets the NIP-42 handshake hold the idle clock open
     });
     cleanup = () => {
       ws._subs.delete(subId);
@@ -447,7 +462,7 @@ export async function count(relays, filters, opts = {}) {
   const perRelay = relays.map((url) => new Promise((resolve) => {
     let done = false, idleTimer = null;
     const finish = () => { if (done) return; done = true; clearTimeout(idleTimer); ws && ws._subs.delete(subId); resolve(); };
-    const bump = () => { if (done) return; clearTimeout(idleTimer); idleTimer = setTimeout(finish, idle); };
+    const bump = (ms = idle) => { if (done) return; clearTimeout(idleTimer); idleTimer = setTimeout(finish, ms); };
     let ws;
     try { ws = connect(url); } catch { return finish(); }
     ws._subs.set(subId, {
@@ -455,6 +470,7 @@ export async function count(relays, filters, opts = {}) {
       onEose: finish, // a CLOSED (e.g. unsupported / auth refused) ends this relay
       filters: filterArr, // kept so a NIP-42 auth-required COUNT can be replayed
       verb: 'COUNT',
+      bump,               // lets the NIP-42 handshake hold the idle clock open
     });
     bump(); // arm now so a relay that never opens / never answers still finishes
     whenOpen(ws)
