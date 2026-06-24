@@ -40,11 +40,47 @@ console.log('\nNIP-19 codec');
     assert.equal(back.data, hex);
   });
   check('note encodes with the note hrp', () => assert.ok(nip19.noteEncode(hex).startsWith('note1')));
+  check('nsec round-trips', () => assert.equal(nip19.decode(nip19.nsecEncode(hex)).data, hex));
   check('toHexPubkey accepts npub and passes hex through', () => {
     assert.equal(nip19.toHexPubkey(nip19.npubEncode(hex)), hex);
     assert.equal(nip19.toHexPubkey(hex), hex);
   });
   check('nostr.js re-exports the same nip19', () => assert.equal(nostr.nip19, nip19));
+  // A known NIP-19 spec vector pins the bech32 encoding, not just round-tripping.
+  const pk = '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d';
+  check('npub matches the NIP-19 spec vector', () =>
+    assert.equal(nip19.npubEncode(pk), 'npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6'));
+  check('nprofile carries pubkey + relays', () => {
+    const np = nip19.nprofileEncode({ pubkey: pk, relays: ['wss://r.x.com', 'wss://y.io'] });
+    assert.ok(np.startsWith('nprofile1'));
+    const d = nip19.decode(np);
+    assert.equal(d.type, 'nprofile');
+    assert.equal(d.data.pubkey, pk);
+    assert.deepEqual(d.data.relays, ['wss://r.x.com', 'wss://y.io']);
+  });
+  check('nevent carries id + relays + author + kind', () => {
+    const d = nip19.decode(nip19.neventEncode({ id: hex, relays: ['wss://r.x.com'], author: pk, kind: 1 }));
+    assert.equal(d.type, 'nevent');
+    assert.equal(d.data.id, hex);
+    assert.equal(d.data.author, pk);
+    assert.equal(d.data.kind, 1);
+    assert.deepEqual(d.data.relays, ['wss://r.x.com']);
+  });
+  check('naddr carries identifier + author + kind', () => {
+    const d = nip19.decode(nip19.naddrEncode({ identifier: 'banana', pubkey: pk, kind: 30023, relays: [] }));
+    assert.equal(d.type, 'naddr');
+    assert.equal(d.data.identifier, 'banana');
+    assert.equal(d.data.pubkey, pk);
+    assert.equal(d.data.kind, 30023);
+  });
+  check('nrelay carries the relay url', () =>
+    assert.equal(nip19.decode(nip19.nrelayEncode('wss://relay.example')).data, 'wss://relay.example'));
+  check('toHexPubkey unwraps nprofile and the nostr: URI prefix', () => {
+    assert.equal(nip19.toHexPubkey(nip19.nprofileEncode({ pubkey: pk })), pk);
+    assert.equal(nip19.toHexPubkey('nostr:' + nip19.npubEncode(pk)), pk);
+  });
+  check('decode rejects a bad checksum', () =>
+    assert.throws(() => nip19.decode('npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w7')));
 }
 
 // ===========================================================================
