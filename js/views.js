@@ -97,6 +97,9 @@ function makeApi(ctx) {
     // per-view persisted state (survives reloads)
     getState: ctx.getState,
     setState: ctx.setState,
+    // LLM callback — invoke the model from inside a view to process fetched data.
+    // api.agent(prompt, opts?) -> Promise<string>. opts.system overrides the default.
+    agent: ctx.agent || null,
   };
 }
 

@@ -5,7 +5,7 @@ import * as store from './storage.js';
 import * as nostr from './nostr.js';
 import * as views from './views.js';
 import * as theme from './theme.js';
-import { converse } from './llm.js';
+import { converse, complete } from './llm.js';
 import { verifyApiKey, detectProvider, normalizeBaseUrl, PROVIDERS } from './auth.js';
 import { SYSTEM, TOOLS } from './agent.js';
 
@@ -245,6 +245,25 @@ function renderActiveView() {
         getState: () => view.state || (view.state = {}),
         setState: (obj) => { view.state = { ...(view.state || {}), ...obj }; persist(); },
         onCleanup: (fn) => entry.cleanups.push(fn),
+        agent: async (prompt, opts = {}) => {
+          if ($('#confirm-dialog').open) throw new Error('Another AI call is already awaiting confirmation.');
+          const preview = prompt.length > 200 ? prompt.slice(0, 200) + '…' : prompt;
+          const allowed = await confirmDialog({
+            title: 'A view wants to call the AI',
+            message: preview,
+            confirmLabel: 'Allow',
+            danger: false,
+          });
+          if (!allowed) throw new Error('AI call denied by user.');
+          return complete({
+            apiKey: project.settings.apiKey,
+            provider: project.settings.provider,
+            baseUrl: project.settings.baseUrl,
+            model: project.settings.model,
+            system: opts.system || 'You are a helpful assistant.',
+            prompt,
+          });
+        },
       });
     }
   }
