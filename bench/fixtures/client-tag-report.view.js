@@ -1,15 +1,16 @@
 // client-tag-report.view.js
 //
-// A reference VIEW for Amy — the literal body of render(root, api) that
-// save_view stores. Paste it into Amy's chat ("save this as a view") or use it
-// as a query()/subscribe() stress test. It is intentionally demanding: it
-// fans out across HUNDREDS of relays, so it doubles as a check that the relay
-// pool stays correct and efficient under load.
+// TEST FIXTURE — not sample code to copy. This is the body of a generated Amy
+// view (executed as render(root, api), the way save_view stores it), used by the
+// benches in ../ to exercise the relay pool: it fans out across HUNDREDS of
+// relays, so running it end to end checks that querying/streaming/de-dup stay
+// correct and efficient under load. It is deliberately demanding and realistic
+// rather than minimal. Driven by relay-pool / completeness / view .bench.mjs.
 //
 // What it does
-//   1. Builds one filter for "events in the last 7 days" and runs it against
-//      every relay in a self-expanding pool, one relay at a time (api.queryAt)
-//      so each event can be attributed to the relay it came from.
+//   1. Builds one filter for "events in the last 7 days" and streams it against
+//      every relay in a self-expanding pool, one relay at a time
+//      (api.queryStreamAt) so each event is attributed to the relay it came from.
 //   2. Parses every event's e / a / p tags for relay hints (tag[2]) and feeds
 //      those relays back into the pool — the pool grows as the crawl runs.
 //   3. De-dupes events across relays by id, then groups by the FIRST value of

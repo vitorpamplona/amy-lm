@@ -1,5 +1,5 @@
 // relay-pool.bench.mjs — efficiency benchmark + regression test for the
-// client-tag report view (examples/client-tag-report.view.js) and the relay
+// client-tag report view (bench/fixtures/client-tag-report.view.js) and the relay
 // pool it leans on (js/nostr.js).
 //
 // It stands up a SIMULATED network of ~180 relays over a mock WebSocket (no
@@ -50,7 +50,7 @@ function clientFor(seq) {
 // ---------------------------------------------------------------------------
 // Read the view under test + its tunables (so the test tracks the real file)
 // ---------------------------------------------------------------------------
-const viewPath = join(ROOT, 'examples', 'client-tag-report.view.js');
+const viewPath = join(ROOT, 'bench', 'fixtures', 'client-tag-report.view.js');
 const viewSrc = readFileSync(viewPath, 'utf8');
 const tunable = (name) => {
   const m = viewSrc.match(new RegExp('const\\s+' + name + '\\s*=\\s*(\\d+)'));

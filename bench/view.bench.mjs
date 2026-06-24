@@ -14,7 +14,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const viewSrc = readFileSync(join(ROOT, 'examples', 'client-tag-report.view.js'), 'utf8');
+const viewSrc = readFileSync(join(ROOT, 'bench', 'fixtures', 'client-tag-report.view.js'), 'utf8');
 const tunable = (n) => { const m = viewSrc.match(new RegExp('const\\s+' + n + '\\s*=\\s*(\\d+)')); assert(m, `tunable ${n}`); return Number(m[1]); };
 const PER_RELAY_LIMIT = tunable('PER_RELAY_LIMIT');
 const MAX_RELAYS = tunable('MAX_RELAYS');

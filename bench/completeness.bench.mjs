@@ -25,7 +25,7 @@ import { dirname, join } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
-const viewSrc = readFileSync(join(ROOT, 'examples', 'client-tag-report.view.js'), 'utf8');
+const viewSrc = readFileSync(join(ROOT, 'bench', 'fixtures', 'client-tag-report.view.js'), 'utf8');
 const tunable = (n) => { const m = viewSrc.match(new RegExp('const\\s+' + n + '\\s*=\\s*(\\d+)')); assert(m, `tunable ${n} missing`); return Number(m[1]); };
 const PER_RELAY_LIMIT = tunable('PER_RELAY_LIMIT');
 const CONCURRENCY = tunable('CONCURRENCY');
