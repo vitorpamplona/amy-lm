@@ -29,3 +29,17 @@ It's designed to stay light across **hundreds of relays in a browser tab**:
 
 Tunables (window, per-relay limit, relay cap, crawl depth, concurrency, chart
 sizes) are constants at the top of the file.
+
+### Benchmark / regression test
+
+[`bench/relay-pool.bench.mjs`](../bench/relay-pool.bench.mjs) runs this exact
+view body over a simulated 180-relay network (mock WebSocket, no real sockets)
+wired to the real [`js/nostr.js`](../js/nostr.js) `query()`. It asserts the
+efficiency invariants — one warm socket per relay (no reconnect churn),
+pagination reuse, in-flight REQs bounded by `CONCURRENCY`, exact cross-relay
+de-dup, and bounded retained memory — and prints a metrics report:
+
+```bash
+npm test          # run the checks (exit non-zero on regression)
+npm run bench     # same, with a GC-stable heap-delta number
+```
