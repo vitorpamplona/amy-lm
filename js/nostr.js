@@ -77,31 +77,36 @@ function connect(url) {
     if (type === 'COUNT') { const sub = ws._subs.get(a); if (sub && sub.onCount) sub.onCount(b && b.count); return; }
     // NIP-42: relay challenges us. Remember it; we only answer if asked (below).
     if (type === 'AUTH') { ws._challenge = a; return; }
-    // OK for one of our AUTH events -> settle the pending authenticate() call.
+    // OK for one of our AUTH events -> settle the pending authenticate() call. On
+    // success replay every active subscription: the relay now accepts us, but not
+    // all relays send a CLOSED to flag which subs they were withholding (some just
+    // stay silent), so we can't rely on a per-sub trigger to know what to resend.
+    // Re-issuing an existing subId simply restarts that sub relay-side, which is
+    // harmless (we de-dupe events by id), so resending them all is safe.
     if (type === 'OK') {
       const w = ws._authWaiters.get(a);
-      if (w) { ws._authWaiters.delete(a); b ? w.resolve() : w.reject(new Error(data[3] || 'relay rejected AUTH')); }
+      if (w) {
+        ws._authWaiters.delete(a);
+        if (b) { w.resolve(); resendActiveSubs(ws); }
+        else w.reject(new Error(data[3] || 'relay rejected AUTH'));
+      }
       return;
     }
-    // CLOSED with "auth-required" means this request needs NIP-42 auth first. The
-    // relay has dropped the subscription, so once we authenticate it will sit idle
-    // until we replay the original request (REQ or COUNT) — there is no automatic
-    // re-run on its end. Hold the sub's idle clock open across the signer prompt,
-    // resend the filter on confirmation, then resume normal idling. Otherwise treat
-    // it as the stream's end.
+    // CLOSED with "auth-required" means this request needs NIP-42 auth first. It
+    // bootstraps the handshake; the OK handler above does the actual replay (for
+    // this sub and any others the relay silently withheld). Hold this sub's idle
+    // clock open across the signer prompt so it isn't torn down mid-handshake.
+    // Anything else CLOSED is just the stream's end.
     if (type === 'CLOSED') {
       const sub = ws._subs.get(a);
       if (!sub) return;
       if (/^auth-required/i.test(String(b || '')) && ws._challenge && !sub._authTried) {
         sub._authTried = true;
-        sub.bump && sub.bump(AUTH_GRACE_MS); // don't idle out while the handshake runs
-        authenticate(ws, url)
-          .then(() => {
-            if (!ws._subs.has(a)) return;
-            try { ws.send(JSON.stringify([sub.verb || 'REQ', a, ...sub.filters])); } catch {}
-            sub.bump && sub.bump(); // data should flow now — back to the normal idle window
-          })
-          .catch(() => sub.onEose && sub.onEose());
+        // Hold every sub's idle clock open across the signer prompt, not just this
+        // one: the relay may be silently withholding the others too, and the OK
+        // handler replays them all once we authenticate.
+        for (const s of ws._subs.values()) s.bump && s.bump(AUTH_GRACE_MS);
+        authenticate(ws, url).catch(() => sub.onEose && sub.onEose());
       } else if (sub.onEose) {
         sub.onEose();
       }
@@ -111,6 +116,22 @@ function connect(url) {
   ws.addEventListener('close', () => { if (sockets.get(url) === ws) sockets.delete(url); });
   sockets.set(url, ws);
   return ws;
+}
+
+/**
+ * Replay every active subscription's request on `ws`. Called once a NIP-42 AUTH
+ * succeeds: relays that gate reads don't re-run our REQ/COUNT on their own after
+ * we authenticate (and many never send a CLOSED to tell us which subs they held
+ * back), so they sit idle until we ask again. Re-sending an existing subId just
+ * restarts that subscription relay-side — harmless for ones already streaming, as
+ * we de-dupe by id — so we resend them all and (re)arm each one's idle window.
+ */
+function resendActiveSubs(ws) {
+  for (const [subId, sub] of ws._subs) {
+    if (!sub.filters) continue;
+    try { ws.send(JSON.stringify([sub.verb || 'REQ', subId, ...sub.filters])); } catch {}
+    sub.bump && sub.bump(); // events should flow now — back to the normal idle window
+  }
 }
 
 /**
