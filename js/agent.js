@@ -48,7 +48,7 @@ api surface:
 - api.signer.getPublicKey() -> Promise<hex pubkey>
 - api.signer.nip44.encrypt(pubkey, plaintext) / api.signer.nip44.decrypt(pubkey, ciphertext) -> Promise<string>. NIP-44 via the user's extension; the modern scheme. Use it to seal/unseal NIP-59 gift wraps (kind 1059) and NIP-17 DMs. To OPEN a gift wrap addressed to the user: decrypt wrap.content with nip44.decrypt(wrap.pubkey, wrap.content) to get the seal (kind 13), then decrypt seal.content with nip44.decrypt(seal.pubkey, seal.content) to get the rumor (the real unsigned event). Throws if the extension lacks NIP-44 — catch and tell the user.
 - api.signer.nip04.encrypt(pubkey, plaintext) / api.signer.nip04.decrypt(pubkey, ciphertext) -> Promise<string>. Legacy/deprecated DM scheme (NIP-04); only for old kind-4 events. Prefer nip44.
-- api.nip19.npubEncode(hex) / .noteEncode(hex) / .decode(str) / .toHexPubkey(npubOrHex)
+- api.nip19 full NIP-19 codec. Encoders: .npubEncode(hex) / .nsecEncode(hex) / .noteEncode(hex) / .nprofileEncode({pubkey, relays?}) / .neventEncode({id, relays?, author?, kind?}) / .naddrEncode({identifier, pubkey, kind, relays?}) / .nrelayEncode(url). .decode(str) -> {type, data}: data is hex for npub/nsec/note, else a pointer object (nprofile -> {pubkey, relays}, nevent -> {id, relays, author, kind}, naddr -> {identifier, pubkey, kind, relays}, nrelay -> url); accepts a "nostr:" prefix. .toHexPubkey(npubOrNprofileOrHex) -> hex.
 - api.el(tag, props?, children?) -> element. props: { class, text, style:{}, onClick, ...attrs }. children: node | string | array.
 - api.timeAgo(unixSeconds) -> "5m ago"
 - api.getState() / api.setState(obj) -> small per-view persisted state (survives reloads).

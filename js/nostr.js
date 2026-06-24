@@ -898,7 +898,8 @@ export function searchSubscribe(seedRelays, searchText, filters = {}, onEvent, o
 }
 
 // ---------------------------------------------------------------------------
-// NIP-19 (bech32) — npub / nsec / note. The codec lives in nip19.js; re-exported
-// here so `nostr.nip19` keeps working for importers.
+// NIP-19 (bech32) — npub / nsec / note / nprofile / nevent / naddr / nrelay.
+// The codec lives in nip19.js; re-exported here so `nostr.nip19` keeps working
+// for importers.
 // ---------------------------------------------------------------------------
 export { nip19 } from './nip19.js';
