@@ -52,6 +52,12 @@ npm test          # run the checks (exit non-zero on regression)
 npm run bench     # same, with a GC-stable heap-delta number
 ```
 
+[`bench/view.bench.mjs`](../bench/view.bench.mjs) is the view's own contract
+test (distinct from the engine benches above): it asserts e/a/p relay-hint
+harvesting, trailing-slash relay dedup, client grouping (no-tag excluded,
+first tag wins on multiples), the empty state, the "COUNT unsupported"
+completeness path, and the `MAX_RELAYS` / `MAX_WAVES` crawl bounds.
+
 ### Are we missing events?
 
 Efficiency is not completeness. Two things make this view silently *undercount*

@@ -198,12 +198,15 @@ try {
     gaps.sort((a, b) => b.missing - a.missing);
   }
   const missingTotal = gaps.reduce((s, g) => s + g.missing, 0);
+  // Relays we actually queried (perRelay has an entry per query). NOT queried.size,
+  // which also counts relays discovered in the final wave but never reached.
+  const reached = perRelay.size;
   const verdict = hitLimit.size
     ? ` · ⚠ ${hitLimit.size} relay(s) likely truncated${missingTotal ? ` (≥${missingTotal.toLocaleString()} events missed)` : ''}`
     : '';
 
   out.innerHTML = '';
-  setStatus(`Done · ${queried.size} relays reached out to · ${seen.size.toLocaleString()} unique events · ${withClient.toLocaleString()} carried a client tag${verdict}`);
+  setStatus(`Done · ${reached} relays reached out to · ${seen.size.toLocaleString()} unique events · ${withClient.toLocaleString()} carried a client tag${verdict}`);
 
   if (!seen.size) {
     out.append(card([
@@ -230,7 +233,7 @@ try {
   out.append(card([
     heading('Unique events per relay'),
     el('div', { style: { marginBottom: '12px' } }, muted(
-      `${queried.size} relays reached out to (from ${seedCount} seed${seedCount === 1 ? '' : 's'}, expanded via e/a/p relay hints) · ${responded} returned events`
+      `${reached} relays reached out to (from ${seedCount} seed${seedCount === 1 ? '' : 's'}, expanded via e/a/p relay hints) · ${responded} returned events`
       + (relayRows.length > TOP_RELAYS ? ` · showing top ${TOP_RELAYS}` : ''),
     )),
     barChart(shownRelays),
