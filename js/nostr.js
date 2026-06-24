@@ -75,8 +75,17 @@ function connect(url) {
     if (type === 'EOSE') { const sub = ws._subs.get(a); if (sub && sub.onEose) sub.onEose(); return; }
     // NIP-45: relay reports how many events match -> { count, approximate? }.
     if (type === 'COUNT') { const sub = ws._subs.get(a); if (sub && sub.onCount) sub.onCount(b && b.count); return; }
-    // NIP-42: relay challenges us. Remember it; we only answer if asked (below).
-    if (type === 'AUTH') { ws._challenge = a; return; }
+    // NIP-42: relay is asking us to authenticate. Remember the challenge and, if a
+    // signer is connected, answer it proactively — don't wait for a request to be
+    // refused first. Many relays withhold events silently (no CLOSED), so a refusal
+    // may never come; authenticating up front means later REQs hit an already-authed
+    // socket, and the OK handler replays anything already in flight. With no signer
+    // we can't answer, so we just keep the challenge for a later lazy attempt.
+    if (type === 'AUTH') {
+      ws._challenge = a;
+      if (signer.available()) authenticate(ws, url).catch(() => {});
+      return;
+    }
     // OK for one of our AUTH events -> settle the pending authenticate() call. On
     // success replay every active subscription: the relay now accepts us, but not
     // all relays send a CLOSED to flag which subs they were withholding (some just
@@ -138,9 +147,12 @@ function resendActiveSubs(ws) {
  * NIP-42: answer a relay's AUTH challenge. We sign an ephemeral kind 22242
  * event (tagging the relay url and the challenge) with the NIP-07 signer and
  * send it as ["AUTH", event]. Resolves once the relay replies OK, rejects if it
- * refuses, times out, or there is no signer to authenticate with. We do this
- * lazily — only when a relay actually withholds data — so public relays never
- * trigger a signature prompt.
+ * refuses, times out, or there is no signer to authenticate with. We answer
+ * whenever the relay asks (a challenge, or a request refused with auth-required),
+ * so only relays that actually request auth ever trigger a signature prompt.
+ *
+ * `ws._authInFlight` is true while the handshake runs so a request sent in that
+ * window can hold its idle clock open instead of giving up before we're authed.
  */
 function authenticate(ws, url) {
   const challenge = ws._challenge;
@@ -148,6 +160,7 @@ function authenticate(ws, url) {
   if (!signer.available()) return Promise.reject(new Error('relay requires NIP-42 auth but no signer is connected'));
   if (ws._authPromise && ws._authedChallenge === challenge) return ws._authPromise;
   ws._authedChallenge = challenge;
+  ws._authInFlight = true;
   ws._authPromise = (async () => {
     const pubkey = await signer.getPublicKey();
     const event = await signer.signEvent({
@@ -165,6 +178,8 @@ function authenticate(ws, url) {
       catch (e) { clearTimeout(t); ws._authWaiters.delete(event.id); reject(e); }
     });
   })();
+  const settled = () => { ws._authInFlight = false; };
+  ws._authPromise.then(settled, settled);
   return ws._authPromise;
 }
 
@@ -278,7 +293,10 @@ function reqOnce(url, filterArr, opts = {}) {
     };
     bump(); // arm now so a relay that never opens still resolves (no hang)
     whenOpen(ws)
-      .then(() => { ws.send(JSON.stringify(['REQ', subId, ...filterArr])); bump(); }) // reset once the REQ is actually out
+      // Reset the idle clock once the REQ is actually out. If a NIP-42 handshake is
+      // still running, hold open longer: the relay won't answer until we're authed,
+      // and the AUTH OK will replay this REQ — don't give up before then.
+      .then(() => { ws.send(JSON.stringify(['REQ', subId, ...filterArr])); bump(ws._authInFlight ? AUTH_GRACE_MS : idle); })
       .catch(finish);
   });
 }
@@ -495,7 +513,8 @@ export async function count(relays, filters, opts = {}) {
     });
     bump(); // arm now so a relay that never opens / never answers still finishes
     whenOpen(ws)
-      .then(() => { ws.send(JSON.stringify(['COUNT', subId, ...filterArr])); bump(); })
+      // Hold open through an in-flight NIP-42 handshake — see reqOnce for why.
+      .then(() => { ws.send(JSON.stringify(['COUNT', subId, ...filterArr])); bump(ws._authInFlight ? AUTH_GRACE_MS : idle); })
       .catch(finish);
   }));
 
