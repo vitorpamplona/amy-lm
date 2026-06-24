@@ -61,6 +61,9 @@ const sockets = new Map(); // url -> WebSocket (kept warm and reused)
 const AUTH_GRACE_MS = 30000;
 
 function connect(url) {
+  // Upgrade ws:// to wss:// on HTTPS pages to avoid mixed-content blocks.
+  if (typeof location !== 'undefined' && location.protocol === 'https:' && url.startsWith('ws://'))
+    url = 'wss://' + url.slice(5);
   let ws = sockets.get(url);
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return ws;
   ws = new WebSocket(url);
