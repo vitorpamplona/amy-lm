@@ -10,6 +10,8 @@
 // "sk-ant-", OpenAI keys with "sk-" (anything else), and Google AI Studio keys
 // with "AIza" (legacy) or "AQ." (current).
 
+import { errorDetail } from './http.js';
+
 // Per-provider connection metadata (labels, defaults, where to make a key).
 export const PROVIDERS = {
   anthropic: {
@@ -113,88 +115,54 @@ export async function verifyApiKey(apiKey, baseUrl) {
   return verifyGoogle(key);
 }
 
-async function verifyAnthropic(key) {
+/**
+ * Verify a key by GETting a provider's models endpoint and parsing the list.
+ * Shared by the three built-in providers, which differ only in URL/headers, the
+ * statuses that mean "bad key", how the model list is shaped, and the names used
+ * in the error copy (`apiName` in reach/HTTP errors, `rejectName` for a bad key
+ * — Gemini's API is "Gemini" but the key issuer is "Google").
+ */
+async function listModels({ provider, apiName, rejectName, url, headers, rejectStatuses, parse }) {
   let res;
   try {
-    res = await fetch(`${ANTHROPIC_MODELS}?limit=20`, {
-      headers: {
-        'x-api-key': key,
-        'anthropic-version': ANTHROPIC_VERSION,
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-    });
-  } catch (err) {
-    throw new Error('Could not reach the Anthropic API. Check your connection and try again.');
+    res = await fetch(url, { headers });
+  } catch {
+    throw new Error(`Could not reach the ${apiName} API. Check your connection and try again.`);
   }
-
-  if (res.status === 401) throw new Error('Anthropic rejected that key. Double-check you copied the whole thing.');
-  if (!res.ok) {
-    let detail = '';
-    try { detail = (await res.json()).error?.message || ''; } catch {}
-    throw new Error(`Anthropic API ${res.status}: ${detail || res.statusText}`);
+  if (rejectStatuses.includes(res.status)) {
+    throw new Error(`${rejectName} rejected that key. Double-check you copied the whole thing.`);
   }
-
+  if (!res.ok) throw new Error(`${apiName} API ${res.status}: ${(await errorDetail(res)) || res.statusText}`);
   let models = [];
-  try {
-    const data = await res.json();
-    models = (data.data || []).map((m) => m.id);
-  } catch {}
-  return { provider: 'anthropic', models };
+  try { models = parse(await res.json()); } catch {}
+  return { provider, models };
 }
 
-async function verifyOpenAI(key) {
-  let res;
-  try {
-    res = await fetch(OPENAI_MODELS, {
-      headers: { Authorization: `Bearer ${key}` },
-    });
-  } catch (err) {
-    throw new Error('Could not reach the OpenAI API. Check your connection and try again.');
-  }
+const verifyAnthropic = (key) => listModels({
+  provider: 'anthropic', apiName: 'Anthropic', rejectName: 'Anthropic',
+  url: `${ANTHROPIC_MODELS}?limit=20`,
+  headers: { 'x-api-key': key, 'anthropic-version': ANTHROPIC_VERSION, 'anthropic-dangerous-direct-browser-access': 'true' },
+  rejectStatuses: [401],
+  parse: (data) => (data.data || []).map((m) => m.id),
+});
 
-  if (res.status === 401) throw new Error('OpenAI rejected that key. Double-check you copied the whole thing.');
-  if (!res.ok) {
-    let detail = '';
-    try { detail = (await res.json()).error?.message || ''; } catch {}
-    throw new Error(`OpenAI API ${res.status}: ${detail || res.statusText}`);
-  }
+const verifyOpenAI = (key) => listModels({
+  provider: 'openai', apiName: 'OpenAI', rejectName: 'OpenAI',
+  url: OPENAI_MODELS,
+  headers: { Authorization: `Bearer ${key}` },
+  rejectStatuses: [401],
+  parse: (data) => (data.data || []).map((m) => m.id),
+});
 
-  let models = [];
-  try {
-    const data = await res.json();
-    models = (data.data || []).map((m) => m.id);
-  } catch {}
-  return { provider: 'openai', models };
-}
-
-async function verifyGoogle(key) {
-  let res;
-  try {
-    res = await fetch(`${GEMINI_MODELS}?pageSize=100`, {
-      headers: { 'x-goog-api-key': key },
-    });
-  } catch (err) {
-    throw new Error('Could not reach the Gemini API. Check your connection and try again.');
-  }
-
-  if (res.status === 400 || res.status === 401 || res.status === 403) {
-    throw new Error('Google rejected that key. Double-check you copied the whole thing.');
-  }
-  if (!res.ok) {
-    let detail = '';
-    try { detail = (await res.json()).error?.message || ''; } catch {}
-    throw new Error(`Gemini API ${res.status}: ${detail || res.statusText}`);
-  }
-
-  let models = [];
-  try {
-    const data = await res.json();
-    models = (data.models || [])
-      .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
-      .map((m) => (m.name || '').replace(/^models\//, ''));
-  } catch {}
-  return { provider: 'google', models };
-}
+const verifyGoogle = (key) => listModels({
+  provider: 'google', apiName: 'Gemini', rejectName: 'Google',
+  url: `${GEMINI_MODELS}?pageSize=100`,
+  headers: { 'x-goog-api-key': key },
+  rejectStatuses: [400, 401, 403],
+  parse: (data) => (data.models || [])
+    .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+    .map((m) => (m.name || '').replace(/^models\//, '')),
+});
 
 // Verify an OpenAI-compatible endpoint by listing its models. The key is sent as
 // a Bearer token when present and omitted when blank (local servers like Ollama
@@ -213,11 +181,7 @@ async function verifyOpenAICompatible(key, baseUrl) {
   if (res.status === 401 || res.status === 403) {
     throw new Error('That endpoint rejected the key. Check the key — or leave it blank if the server doesn’t need one.');
   }
-  if (!res.ok) {
-    let detail = '';
-    try { detail = (await res.json()).error?.message || ''; } catch {}
-    throw new Error(`${baseUrl} returned ${res.status}: ${detail || res.statusText}`);
-  }
+  if (!res.ok) throw new Error(`${baseUrl} returned ${res.status}: ${(await errorDetail(res)) || res.statusText}`);
 
   // OpenAI shape is { data: [{ id }] }; tolerate a few common variants.
   let models = [];

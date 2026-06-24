@@ -16,6 +16,7 @@
 // branch.
 
 import { detectProvider, normalizeBaseUrl } from './auth.js';
+import { errorDetail } from './http.js';
 
 const ANTHROPIC_ENDPOINT = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -54,6 +55,27 @@ export async function converse(args) {
 }
 
 // ---------------------------------------------------------------------------
+// The shared agentic tool loop
+// ---------------------------------------------------------------------------
+// Every provider runs the same loop: ask the model, surface its text, and — if
+// it asked to use tools — run them and feed the results back, until it stops or
+// we hit the step cap. The only per-provider differences are how a step is made
+// and how its reply is translated into our canonical (Anthropic-shaped) blocks;
+// `step()` owns both. It must append the assistant turn to `messages` itself
+// (Anthropic stores its raw content to preserve thinking blocks; the others
+// store the translation) and return the canonical blocks for the loop to act on.
+async function runToolLoop({ step, messages, dispatch, onText, onToolUse }) {
+  for (let i = 0; i < MAX_STEPS; i++) {
+    const blocks = await step();
+    for (const b of blocks) if (b.type === 'text' && b.text && onText) onText(b.text);
+    const toolUses = blocks.filter((b) => b.type === 'tool_use');
+    if (!toolUses.length) return messages;
+    messages.push({ role: 'user', content: await runTools(toolUses, dispatch, onToolUse) });
+  }
+  throw new Error(`Tool loop exceeded ${MAX_STEPS} steps; stopping to avoid a runaway.`);
+}
+
+// ---------------------------------------------------------------------------
 // Anthropic (Claude)
 // ---------------------------------------------------------------------------
 async function callAnthropic({ apiKey, model, system, messages, tools }) {
@@ -74,31 +96,20 @@ async function callAnthropic({ apiKey, model, system, messages, tools }) {
       messages,
     }),
   });
-  if (!res.ok) {
-    let detail = '';
-    try { detail = (await res.json()).error?.message || ''; } catch {}
-    throw new Error(`Anthropic API ${res.status}: ${detail || res.statusText}`);
-  }
+  if (!res.ok) throw new Error(`Anthropic API ${res.status}: ${(await errorDetail(res)) || res.statusText}`);
   return res.json();
 }
 
-async function converseAnthropic({ apiKey, model, system, messages, tools, dispatch, onText, onToolUse }) {
-  for (let step = 0; step < MAX_STEPS; step++) {
-    const response = await callAnthropic({ apiKey, model, system, messages, tools });
-
-    // Record the assistant turn verbatim (preserve thinking + tool_use blocks).
-    messages.push({ role: 'assistant', content: response.content });
-
-    for (const block of response.content) {
-      if (block.type === 'text' && onText) onText(block.text);
-    }
-
-    if (response.stop_reason !== 'tool_use') return messages;
-
-    const toolUses = response.content.filter((b) => b.type === 'tool_use');
-    messages.push({ role: 'user', content: await runTools(toolUses, dispatch, onToolUse) });
-  }
-  throw new Error('Tool loop exceeded 16 steps; stopping to avoid a runaway.');
+function converseAnthropic({ apiKey, model, system, messages, tools, dispatch, onText, onToolUse }) {
+  return runToolLoop({
+    messages, dispatch, onText, onToolUse,
+    step: async () => {
+      const response = await callAnthropic({ apiKey, model, system, messages, tools });
+      // Store the assistant turn verbatim (preserves thinking + tool_use blocks).
+      messages.push({ role: 'assistant', content: response.content });
+      return response.content;
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -119,44 +130,30 @@ async function callOpenAI({ apiKey, model, messages, tools, endpoint }) {
       tools: tools.length ? tools : undefined,
     }),
   });
-  if (!res.ok) {
-    let detail = '';
-    try { detail = (await res.json()).error?.message || ''; } catch {}
-    throw new Error(`OpenAI API ${res.status}: ${detail || res.statusText}`);
-  }
+  if (!res.ok) throw new Error(`OpenAI API ${res.status}: ${(await errorDetail(res)) || res.statusText}`);
   return res.json();
 }
 
-async function converseOpenAI({ apiKey, model, system, messages, tools, dispatch, onText, onToolUse, endpoint }) {
+function converseOpenAI({ apiKey, model, system, messages, tools, dispatch, onText, onToolUse, endpoint }) {
   const openaiTools = toOpenAITools(tools);
-
-  for (let step = 0; step < MAX_STEPS; step++) {
-    const data = await callOpenAI({ apiKey, model, messages: toOpenAIMessages(system, messages), tools: openaiTools, endpoint });
-    const msg = data.choices?.[0]?.message || {};
-
-    // Translate the OpenAI message back into canonical (Anthropic-shaped) blocks
-    // so storage and the transcript renderer stay provider-agnostic.
-    const blocks = [];
-    if (typeof msg.content === 'string' && msg.content) {
-      blocks.push({ type: 'text', text: msg.content });
-    }
-    for (const tc of msg.tool_calls || []) {
-      let input = {};
-      try { input = JSON.parse(tc.function?.arguments || '{}'); } catch {}
-      blocks.push({ type: 'tool_use', id: tc.id, name: tc.function?.name, input });
-    }
-    messages.push({ role: 'assistant', content: blocks });
-
-    for (const b of blocks) {
-      if (b.type === 'text' && onText) onText(b.text);
-    }
-
-    const toolUses = blocks.filter((b) => b.type === 'tool_use');
-    if (!toolUses.length) return messages;
-
-    messages.push({ role: 'user', content: await runTools(toolUses, dispatch, onToolUse) });
-  }
-  throw new Error('Tool loop exceeded 16 steps; stopping to avoid a runaway.');
+  return runToolLoop({
+    messages, dispatch, onText, onToolUse,
+    step: async () => {
+      const data = await callOpenAI({ apiKey, model, messages: toOpenAIMessages(system, messages), tools: openaiTools, endpoint });
+      const msg = data.choices?.[0]?.message || {};
+      // Translate the OpenAI message back into canonical (Anthropic-shaped) blocks
+      // so storage and the transcript renderer stay provider-agnostic.
+      const blocks = [];
+      if (typeof msg.content === 'string' && msg.content) blocks.push({ type: 'text', text: msg.content });
+      for (const tc of msg.tool_calls || []) {
+        let input = {};
+        try { input = JSON.parse(tc.function?.arguments || '{}'); } catch {}
+        blocks.push({ type: 'tool_use', id: tc.id, name: tc.function?.name, input });
+      }
+      messages.push({ role: 'assistant', content: blocks });
+      return blocks;
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -174,48 +171,36 @@ async function callGemini({ apiKey, model, system, contents, tools }) {
       generationConfig: { maxOutputTokens: 16000 },
     }),
   });
-  if (!res.ok) {
-    let detail = '';
-    try { detail = (await res.json()).error?.message || ''; } catch {}
-    throw new Error(`Gemini API ${res.status}: ${detail || res.statusText}`);
-  }
+  if (!res.ok) throw new Error(`Gemini API ${res.status}: ${(await errorDetail(res)) || res.statusText}`);
   return res.json();
 }
 
-async function converseGemini({ apiKey, model, system, messages, tools, dispatch, onText, onToolUse }) {
+function converseGemini({ apiKey, model, system, messages, tools, dispatch, onText, onToolUse }) {
   const geminiTools = toGeminiTools(tools);
-
-  for (let step = 0; step < MAX_STEPS; step++) {
-    const data = await callGemini({ apiKey, model, system, contents: toGeminiContents(messages), tools: geminiTools });
-    const parts = data.candidates?.[0]?.content?.parts || [];
-
-    // Translate Gemini parts back into canonical (Anthropic-shaped) blocks so
-    // storage and the transcript renderer stay provider-agnostic.
-    const blocks = [];
-    for (const p of parts) {
-      if (typeof p.text === 'string' && p.text) {
-        blocks.push({ type: 'text', text: p.text });
-      } else if (p.functionCall) {
-        blocks.push({
-          type: 'tool_use',
-          id: 'call_' + Math.random().toString(36).slice(2, 10),
-          name: p.functionCall.name,
-          input: p.functionCall.args || {},
-        });
+  return runToolLoop({
+    messages, dispatch, onText, onToolUse,
+    step: async () => {
+      const data = await callGemini({ apiKey, model, system, contents: toGeminiContents(messages), tools: geminiTools });
+      const parts = data.candidates?.[0]?.content?.parts || [];
+      // Translate Gemini parts back into canonical (Anthropic-shaped) blocks so
+      // storage and the transcript renderer stay provider-agnostic.
+      const blocks = [];
+      for (const p of parts) {
+        if (typeof p.text === 'string' && p.text) {
+          blocks.push({ type: 'text', text: p.text });
+        } else if (p.functionCall) {
+          blocks.push({
+            type: 'tool_use',
+            id: 'call_' + Math.random().toString(36).slice(2, 10),
+            name: p.functionCall.name,
+            input: p.functionCall.args || {},
+          });
+        }
       }
-    }
-    messages.push({ role: 'assistant', content: blocks });
-
-    for (const b of blocks) {
-      if (b.type === 'text' && onText) onText(b.text);
-    }
-
-    const toolUses = blocks.filter((b) => b.type === 'tool_use');
-    if (!toolUses.length) return messages;
-
-    messages.push({ role: 'user', content: await runTools(toolUses, dispatch, onToolUse) });
-  }
-  throw new Error('Tool loop exceeded 16 steps; stopping to avoid a runaway.');
+      messages.push({ role: 'assistant', content: blocks });
+      return blocks;
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------

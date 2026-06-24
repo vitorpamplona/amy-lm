@@ -1,0 +1,11 @@
+{
+  "name": "amy-lm",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Amy — a self-building Nostr client (static browser app). Node is used only for tests/benchmarks; the app itself has no build step.",
+  "scripts": {
+    "test": "node bench/unit.bench.mjs && node bench/engine.bench.mjs && node bench/relay-pool.bench.mjs && node bench/completeness.bench.mjs && node bench/stream.bench.mjs && node bench/view.bench.mjs",
+    "bench": "node --expose-gc bench/relay-pool.bench.mjs && node --expose-gc bench/completeness.bench.mjs && node --expose-gc bench/stream.bench.mjs"
+  }
+}

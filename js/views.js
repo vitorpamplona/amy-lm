@@ -55,6 +55,10 @@ function makeApi(ctx) {
     // only used to discover relay lists and as a fallback for users who have
     // none. Don't pass relay lists around — just give filters with `authors`.
     query: (filters, opts) => nostr.outboxQuery(seeds, filters, opts),
+    // Streaming query (outbox-routed): calls onEvent(ev, url) for each de-duped
+    // event as it arrives and keeps only ids — process and discard, so a sweep
+    // over many relays never holds the whole result set. Resolves to the count.
+    queryStream: (filters, onEvent, opts) => nostr.outboxQueryStream(seeds, filters, onEvent, opts),
     subscribe: (filters, onEvent, opts) => nostr.outboxSubscribe(seeds, filters, onEvent, opts),
     publish: (draft, opts) => nostr.outboxPublish(seeds, draft, opts),
     // NIP-45 COUNT -> Promise<number>. Approximate, per-relay (not additive);
@@ -80,6 +84,10 @@ function makeApi(ctx) {
     // Escape hatch: talk to explicit relays, bypassing outbox routing. Use only
     // when a view genuinely needs a fixed relay (e.g. a single-relay browser).
     queryAt: (relays, filters, opts) => nostr.query(relays, filters, opts),
+    // Streaming query against explicit relays (bypasses outbox routing): streams
+    // each de-duped event to onEvent(ev, url) and retains only ids. Resolves to
+    // the unique count.
+    queryStreamAt: (relays, filters, onEvent, opts) => nostr.queryStream(relays, filters, onEvent, opts),
     subscribeAt: (relays, filters, onEvent, opts) => nostr.subscribe(relays, filters, onEvent, opts),
     publishAt: (relays, draft) => nostr.publish(relays, draft),
     countAt: (relays, filters, opts) => nostr.count(relays, filters, opts),
