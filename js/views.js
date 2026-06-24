@@ -10,6 +10,7 @@
 // not an injection vector. Keep that in mind if you adapt this for multi-user.
 
 import * as nostr from './nostr.js';
+import { markdown } from './markdown.js';
 
 // The AsyncFunction constructor isn't a global, so reach it via an async fn's
 // prototype. Compiling view code with it lets views use top-level `await`.
@@ -94,6 +95,9 @@ function makeApi(ctx) {
     // tiny dom + format helpers
     el,
     timeAgo,
+    // Render markdown text to a <div class="md"> DOM element. Use this to
+    // display the string returned by api.agent(), which is markdown.
+    md: markdown,
     // per-view persisted state (survives reloads)
     getState: ctx.getState,
     setState: ctx.setState,
