@@ -502,7 +502,7 @@ dialog.confirm { width: min(420px, 92vw); }
 .confirm-icon svg { width: 22px; height: 22px; }
 .confirm-body { grid-column: 2; align-self: center; }
 .confirm-body h3 { margin: 0 0 6px; font-size: 17px; letter-spacing: -.01em; }
-.confirm-body p { margin: 0; line-height: 1.5; font-size: 13px; }
+.confirm-body p { margin: 0; line-height: 1.5; font-size: 13px; white-space: pre-wrap; overflow-wrap: break-word; max-height: 220px; overflow-y: auto; }
 #confirm-form menu {
   grid-column: 1 / -1;
   display: flex; justify-content: flex-end; gap: 8px;

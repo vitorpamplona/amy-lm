@@ -247,7 +247,9 @@ function renderActiveView() {
         onCleanup: (fn) => entry.cleanups.push(fn),
         agent: async (prompt, opts = {}) => {
           if ($('#confirm-dialog').open) throw new Error('Another AI call is already awaiting confirmation.');
-          const preview = prompt.length > 200 ? prompt.slice(0, 200) + '…' : prompt;
+          const sys = opts.system || 'You are a helpful assistant.';
+          const combined = `System:\n${sys}\n\nPrompt:\n${prompt}`;
+          const preview = combined.length > 600 ? combined.slice(0, 600) + '…' : combined;
           const allowed = await confirmDialog({
             title: 'A view wants to call the AI',
             message: preview,
