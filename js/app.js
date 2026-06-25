@@ -249,9 +249,10 @@ function renderActiveView() {
           if ($('#confirm-dialog').open) throw new Error('Another AI call is already awaiting confirmation.');
           const sys = opts.system || 'You are a helpful assistant.';
           const combined = `System:\n${sys}\n\nPrompt:\n${prompt}`;
-          const preview = combined.length > 600 ? combined.slice(0, 600) + '…' : combined;
+          const estTokens = Math.round(combined.length / 4).toLocaleString();
+          const preview = combined.length > 1800 ? combined.slice(0, 1800) + '…' : combined;
           const allowed = await confirmDialog({
-            title: 'A view wants to call the AI',
+            title: `A view wants to call the AI  (~${estTokens} tokens)`,
             message: preview,
             confirmLabel: 'Allow',
             danger: false,
