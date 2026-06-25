@@ -5,6 +5,17 @@
 // ---------------------------------------------------------------------------
 // NIP-07 signer (browser extension exposes window.nostr)
 // ---------------------------------------------------------------------------
+
+// Stamp every event we sign with a NIP-89 "client" tag identifying this app,
+// unless the event already carries one. Returns a shallow copy so callers'
+// drafts are left untouched.
+const CLIENT_TAG = ['client', 'Amy-LLM'];
+function withClientTag(event) {
+  const tags = (event && event.tags) || [];
+  if (tags.some((t) => t[0] === 'client')) return event;
+  return { ...event, tags: [...tags, CLIENT_TAG] };
+}
+
 export const signer = {
   available() { return typeof window !== 'undefined' && !!window.nostr; },
   async getPublicKey() {
@@ -13,7 +24,7 @@ export const signer = {
   },
   async signEvent(event) {
     if (!this.available()) throw new Error('No NIP-07 signer found.');
-    return window.nostr.signEvent(event);
+    return window.nostr.signEvent(withClientTag(event));
   },
   // Optional NIP-07 relay hint: { [url]: { read, write } }. Returns {} if unsupported.
   async getRelays() {
