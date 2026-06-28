@@ -292,6 +292,8 @@ button:disabled { opacity: .5; cursor: not-allowed; transform: none; filter: non
   font-size: 13px;
 }
 .tab:hover { color: var(--text); background: var(--panel-2); }
+/* Separate one view's versions from the next lineage in the strip. */
+.tab.lineage-start { margin-left: 16px; }
 .tab.active {
   background: var(--panel-2);
   color: var(--text);
