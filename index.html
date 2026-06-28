@@ -66,6 +66,7 @@
           <button id="btn-connect-signer" class="menu-item" role="menuitem">Connect signer</button>
           <button id="btn-theme" class="menu-item" role="menuitem" title="Toggle light / dark theme"></button>
           <button id="btn-settings" class="menu-item" role="menuitem">Settings</button>
+          <button id="btn-export-nsite" class="menu-item" role="menuitem" title="Publish your views as a static website on Nostr (NIP-5A)">Export as nsite</button>
           <button id="btn-clear-chat" class="menu-item" role="menuitem" title="Start a fresh conversation (keeps your views)">Clear chat</button>
           <button id="btn-reset" class="menu-item danger" role="menuitem" title="Wipe the local project">Reset</button>
         </div>
@@ -259,6 +260,90 @@
         <button type="button" id="confirm-cancel" class="ghost">Cancel</button>
         <button type="button" id="confirm-ok" class="ghost danger">Confirm</button>
       </menu>
+    </form>
+  </dialog>
+
+  <!-- Export as nsite (NIP-5A) — a three-stage wizard: configure, progress, done -->
+  <dialog id="nsite-dialog">
+    <form method="dialog" id="nsite-form">
+      <h3>Export as nsite</h3>
+
+      <!-- Stage 1: configure -->
+      <div class="nsite-stage" data-stage="configure">
+        <p class="muted">
+          Publish your views as a self-contained <strong>static website on Nostr</strong>
+          (NIP-5A). Your files are stored on your <strong>Blossom</strong> servers and a
+          signed manifest goes to your relays, so the site opens in any nsite-aware client —
+          no server of your own. It ships the view runtime, so it actually runs.
+        </p>
+
+        <div id="nsite-need-signer" class="connect-status error" hidden>
+          Connect your Nostr signer first (menu → Connect signer) — it signs the upload and the manifest.
+        </div>
+
+        <label>Title
+          <input type="text" id="nsite-title" placeholder="My Nostr client" />
+        </label>
+
+        <label>Description
+          <textarea id="nsite-desc" rows="2" placeholder="Shown in link previews when the site is shared."></textarea>
+        </label>
+
+        <div class="field">
+          <span class="field-label">Address</span>
+          <label class="nsite-radio"><input type="radio" name="nsite-kind" value="named" checked />
+            <span><strong>Named site</strong> — a short id under your key. Won’t touch any existing site.</span></label>
+          <label class="nsite-radio"><input type="radio" name="nsite-kind" value="root" />
+            <span><strong>Root site</strong> — your main site. <em>Replaces</em> any existing root nsite.</span></label>
+          <input type="text" id="nsite-dtag" placeholder="my-client" maxlength="13" />
+          <small id="nsite-url-preview" class="muted"></small>
+        </div>
+
+        <label>Blossom servers (one URL per line — your files upload here)
+          <textarea id="nsite-servers" rows="3" placeholder="https://blossom.primal.net"></textarea>
+          <small id="nsite-servers-hint" class="muted">Loaded from your Blossom server list (kind 10063).</small>
+        </label>
+
+        <label>nsite gateway (for the shareable link &amp; preview image)
+          <input type="text" id="nsite-host" value="nsite.lol" />
+        </label>
+
+        <label class="nsite-check"><input type="checkbox" id="nsite-allvers" />
+          Export every version of each view <span class="muted">(default: just the latest of each)</span></label>
+
+        <small class="muted" id="nsite-summary"></small>
+
+        <menu>
+          <button type="button" id="nsite-cancel" class="ghost">Cancel</button>
+          <button type="button" id="nsite-start">Export</button>
+        </menu>
+      </div>
+
+      <!-- Stage 2: progress -->
+      <div class="nsite-stage" data-stage="progress" hidden>
+        <div class="nsite-progress"><div id="nsite-progress-fill"></div></div>
+        <ul id="nsite-log" class="nsite-log"></ul>
+      </div>
+
+      <!-- Stage 3: done -->
+      <div class="nsite-stage" data-stage="done" hidden>
+        <div class="nsite-done-icon" aria-hidden="true">✓</div>
+        <h4 id="nsite-done-title">Published</h4>
+        <div class="field">
+          <span class="field-label">Your nsite address</span>
+          <div class="conn-row">
+            <input type="text" id="nsite-url" readonly />
+            <button type="button" id="nsite-copy" class="ghost">Copy</button>
+          </div>
+          <a id="nsite-open" class="btn-link" target="_blank" rel="noopener">Open ↗</a>
+        </div>
+        <small class="muted" id="nsite-done-detail"></small>
+        <menu>
+          <button type="button" id="nsite-done-close">Done</button>
+        </menu>
+      </div>
+
+      <div id="nsite-error" class="connect-status error" hidden></div>
     </form>
   </dialog>
 
