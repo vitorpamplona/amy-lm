@@ -65,6 +65,23 @@ export const signer = {
 // ---------------------------------------------------------------------------
 const sockets = new Map(); // url -> WebSocket (kept warm and reused)
 
+// Optional per-relay diagnostics tap. A view can register a sink to observe the
+// raw protocol signals the normal read APIs hide — connection open/close/error,
+// NIP-42 AUTH challenge / accept / reject, CLOSED with its reason, and EOSE — so
+// it can explain WHY a relay yielded nothing (dead? auth-gated? filter refused?
+// just empty?) instead of seeing an undifferentiated 0. No-op unless a sink is
+// set, so it costs nothing in normal use.
+let diagSink = null;
+/**
+ * Register (or clear, with null) a diagnostics sink. The sink is called with
+ * ({ url, type, detail }) for relay-protocol events. type is one of:
+ * 'open' | 'close' | 'error' | 'auth-challenge' | 'auth-ok' | 'auth-fail' |
+ * 'closed' (detail = relay's reason) | 'eose'.
+ * @param {((info: {url:string, type:string, detail?:string}) => void) | null} fn
+ */
+export function setRelayDiagnostics(fn) { diagSink = typeof fn === 'function' ? fn : null; }
+function diag(url, type, detail) { if (diagSink) { try { diagSink({ url, type, detail }); } catch { /* a bad sink must not break the pool */ } } }
+
 // While a NIP-42 handshake is in flight a request's idle timer must not fire and
 // tear the subscription down — signing the kind 22242 event usually pops a NIP-07
 // approval prompt that takes longer than the normal idle window. Hold the sub
@@ -86,7 +103,7 @@ function connect(url) {
     try { data = JSON.parse(m.data); } catch { return; }
     const [type, a, b] = data;
     if (type === 'EVENT') { const sub = ws._subs.get(a); if (sub) sub.onEvent(b); return; }
-    if (type === 'EOSE') { const sub = ws._subs.get(a); if (sub && sub.onEose) sub.onEose(); return; }
+    if (type === 'EOSE') { diag(url, 'eose'); const sub = ws._subs.get(a); if (sub && sub.onEose) sub.onEose(); return; }
     // NIP-45: relay reports how many events match -> { count, approximate? }.
     if (type === 'COUNT') { const sub = ws._subs.get(a); if (sub && sub.onCount) sub.onCount(b && b.count); return; }
     // NIP-42: relay is asking us to authenticate. Remember the challenge and, if a
@@ -96,8 +113,9 @@ function connect(url) {
     // socket, and the OK handler replays anything already in flight. With no signer
     // we can't answer, so we just keep the challenge for a later lazy attempt.
     if (type === 'AUTH') {
+      diag(url, 'auth-challenge');
       ws._challenge = a;
-      if (signer.available()) authenticate(ws, url).catch(() => {});
+      if (signer.available()) authenticate(ws, url).then(() => diag(url, 'auth-ok'), (e) => diag(url, 'auth-fail', e && e.message));
       return;
     }
     // OK for one of our AUTH events -> settle the pending authenticate() call. On
@@ -121,6 +139,7 @@ function connect(url) {
     // clock open across the signer prompt so it isn't torn down mid-handshake.
     // Anything else CLOSED is just the stream's end.
     if (type === 'CLOSED') {
+      diag(url, 'closed', String(b || ''));
       const sub = ws._subs.get(a);
       if (!sub) return;
       if (/^auth-required/i.test(String(b || '')) && ws._challenge && !sub._authTried) {
@@ -129,14 +148,16 @@ function connect(url) {
         // one: the relay may be silently withholding the others too, and the OK
         // handler replays them all once we authenticate.
         for (const s of ws._subs.values()) s.bump && s.bump(AUTH_GRACE_MS);
-        authenticate(ws, url).catch(() => sub.onEose && sub.onEose());
+        authenticate(ws, url).then(() => diag(url, 'auth-ok'), (e) => { diag(url, 'auth-fail', e && e.message); sub.onEose && sub.onEose(); });
       } else if (sub.onEose) {
         sub.onEose();
       }
       return;
     }
   });
-  ws.addEventListener('close', () => { if (sockets.get(url) === ws) sockets.delete(url); });
+  ws.addEventListener('open', () => diag(url, 'open'));
+  ws.addEventListener('error', () => diag(url, 'error'));
+  ws.addEventListener('close', () => { diag(url, 'close'); if (sockets.get(url) === ws) sockets.delete(url); });
   sockets.set(url, ws);
   return ws;
 }

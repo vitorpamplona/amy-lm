@@ -93,6 +93,11 @@ function makeApi(ctx) {
     // sockets when done; this is the escape hatch for a view that wants to drop
     // a connection sooner (e.g. a wide crawl freeing a slow relay it gave up on).
     closeRelayAt: (relays) => { for (const u of [].concat(relays)) nostr.closeRelay(u); },
+    // Diagnostics tap: register a sink fn({ url, type, detail }) to observe raw
+    // relay-protocol signals the read APIs hide — 'open' | 'close' | 'error' |
+    // 'auth-challenge' | 'auth-ok' | 'auth-fail' | 'closed' (detail=reason) |
+    // 'eose'. Lets a crawl explain WHY a relay returned nothing. Pass null to stop.
+    setRelayDiagnostics: (fn) => nostr.setRelayDiagnostics(fn),
     subscribeAt: (relays, filters, onEvent, opts) => nostr.subscribe(relays, filters, onEvent, opts),
     publishAt: (relays, draft) => nostr.publish(relays, draft),
     countAt: (relays, filters, opts) => nostr.count(relays, filters, opts),
