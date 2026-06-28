@@ -141,6 +141,33 @@ function connect(url) {
   return ws;
 }
 
+// Close a pooled socket that nothing is using any more. One-shot reads
+// (query / queryStream / count) call this for every relay they touched once the
+// read finishes, so a sweep over hundreds of relays doesn't leave hundreds of
+// sockets open at once and trip the browser's per-tab WebSocket ceiling (Chrome
+// ~255, Firefox 200) — past which every further relay silently fails to connect
+// and looks like it "returned nothing". A live subscribe() keeps its sub in
+// ws._subs, so a socket still in use (size > 0) is left untouched. Closing a
+// still-CONNECTING socket (a dead/slow relay we gave up on) aborts the pending
+// handshake and frees its connection slot immediately.
+function releaseSocket(ws) {
+  if (!ws || (ws._subs && ws._subs.size > 0)) return;
+  try { ws.close(); } catch {}
+}
+
+/**
+ * Force-close the pooled socket to a relay (if any), regardless of any in-flight
+ * subscriptions. Escape hatch for views that crawl many relays and want to
+ * release a connection the instant they're done with it.
+ * @param {string} url
+ */
+export function closeRelay(url) {
+  const ws = sockets.get(url);
+  if (!ws) return;
+  sockets.delete(url);
+  try { ws.close(); } catch {}
+}
+
 /**
  * Replay every active subscription's request on `ws`. Called once a NIP-42 AUTH
  * succeeds: relays that gate reads don't re-run our REQ/COUNT on their own after
@@ -459,6 +486,12 @@ async function fanout(pairs, filterArr, opts, sortDesc) {
   await Promise.all(pairs.flatMap(([url, fs]) =>
     fs.map((filter) => paginate(url, filter, { ...opts, onEvent: (ev) => emit(ev, url) }))
   ));
+  // Release every socket this read opened (unless the caller opted to keep them
+  // warm), so the number of simultaneously-open sockets stays near the fan-out
+  // width instead of growing with the count of relays swept. Without this a
+  // many-relay crawl piles up open (and stuck-CONNECTING) sockets until the
+  // browser's WebSocket ceiling is hit and later relays can't connect at all.
+  if (opts.keepAlive !== true) for (const [url] of pairs) releaseSocket(sockets.get(url));
   return buffer ? finalize(seenMap, filterArr, sortDesc) : count;
 }
 
@@ -624,6 +657,9 @@ export async function count(relays, filters, opts = {}) {
   }));
 
   await Promise.all(perRelay);
+  // Same socket hygiene as fanout(): a COUNT sweep over many relays must not
+  // leave a socket open per relay (see releaseSocket).
+  if (opts.keepAlive !== true) for (const url of relays) releaseSocket(sockets.get(url));
 
   return max;
 }
