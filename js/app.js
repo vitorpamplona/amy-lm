@@ -26,6 +26,54 @@ function persist() { store.save(project); }
 
 function uid() { return 'v' + Math.random().toString(36).slice(2, 9); }
 
+// Strip a trailing "v3" the model might tack on so we don't render "Feed v3 v4";
+// the version number is appended from view.version, not the title.
+function cleanTitle(t) { return String(t || 'View').replace(/\s*v\d+\s*$/i, '').trim() || 'View'; }
+
+// Views in lineage order: lineages by first appearance, versions ascending
+// within each, so successive versions of one view sit together in the tab strip.
+function orderedViews() {
+  const groups = [];
+  const at = new Map();
+  for (const v of project.views) {
+    if (!at.has(v.lineage)) { at.set(v.lineage, groups.length); groups.push([]); }
+    groups[at.get(v.lineage)].push(v);
+  }
+  return groups.flatMap((g) => g.slice().sort((a, b) => a.version - b.version));
+}
+
+// The same data, grouped — what list_views returns and what canvasContext renders.
+function viewGroups() {
+  const groups = [];
+  const at = new Map();
+  for (const v of orderedViews()) {
+    if (!at.has(v.lineage)) { at.set(v.lineage, groups.length); groups.push({ lineage: v.lineage, title: v.title, versions: [] }); }
+    const g = groups[at.get(v.lineage)];
+    g.title = v.title; // keep the newest title for the lineage label
+    g.versions.push({ id: v.id, version: v.version, active: v.id === activeViewId });
+  }
+  return groups;
+}
+
+// A live snapshot of the canvas, appended to the system prompt each turn so the
+// model can resolve "this view" / "go back" / "v2" against what's on screen.
+function canvasContext() {
+  if (!project.views.length) return '\n\n## Current canvas\n(No views yet — the canvas is empty.)';
+  const active = project.views.find((v) => v.id === activeViewId);
+  const focus = active ? `"${active.title} v${active.version}" (id: ${active.id})` : 'none';
+  const lines = viewGroups().map((g) => {
+    const vers = g.versions.map((x) => `v${x.version} (id ${x.id})${x.active ? ' ← ACTIVE' : ''}`).join(' · ');
+    return `  • ${g.title} — ${vers}`;
+  });
+  return [
+    '\n\n## Current canvas (live — reflects what the user sees right now)',
+    `The user is currently looking at: ${focus}.`,
+    'All views, grouped by lineage:',
+    ...lines,
+    'When the user says "this view", "the current one", "go back", or names a version like "v2", resolve it against THIS list — do not guess from chat history. To improve a version, call save_view with fromId set to it (which creates the next version as a new tab) rather than overwriting. After saving, tell the user which version you produced, e.g. "Updated Feed v3 → created Feed v4."',
+  ].join('\n');
+}
+
 // The full source of every view we build piles up inside save_view tool_use
 // blocks in the chat, which inflates every request the model sees. The canonical
 // copy lives in project.views and can be re-read with read_view, so before each
@@ -56,31 +104,48 @@ function compactHistory() {
 async function dispatch(name, input) {
   switch (name) {
     case 'save_view': {
-      let view = project.views.find((v) => v.id === input.id);
+      const title = cleanTitle(input.title);
+      // id => overwrite that exact version in place (rare). Otherwise create a
+      // new view: a next version when fromId points at an existing lineage, else
+      // a fresh v1.
+      let view = input.id ? project.views.find((v) => v.id === input.id) : null;
       if (view) {
-        view.title = input.title;
+        view.title = title;
         view.code = input.code;
       } else {
-        view = { id: uid(), title: input.title, code: input.code, createdAt: Date.now(), state: {} };
+        const source = input.fromId ? project.views.find((v) => v.id === input.fromId) : null;
+        const lineage = source ? source.lineage : uid();
+        const version = source
+          ? Math.max(...project.views.filter((v) => v.lineage === lineage).map((v) => v.version)) + 1
+          : 1;
+        view = { id: uid(), title, lineage, version, code: input.code, createdAt: Date.now(), state: {} };
         project.views.push(view);
       }
       activeViewId = view.id;
       persist();
       renderTabs();
       renderActiveView();
-      return `Saved view "${view.title}" (id: ${view.id}) and opened it on the canvas.`;
+      return `Saved "${view.title} v${view.version}" (id: ${view.id}) and opened it on the canvas.`;
     }
     case 'list_views':
-      return JSON.stringify(project.views.map((v) => ({ id: v.id, title: v.title })));
+      return JSON.stringify(viewGroups());
     case 'read_view': {
       const view = project.views.find((v) => v.id === input.id);
       if (!view) return `No view with id ${input.id}.`;
-      return JSON.stringify({ id: view.id, title: view.title, code: view.code });
+      return JSON.stringify({ id: view.id, title: view.title, version: view.version, lineage: view.lineage, code: view.code });
     }
     case 'delete_view': {
       const before = project.views.length;
+      const gone = project.views.find((v) => v.id === input.id);
       project.views = project.views.filter((v) => v.id !== input.id);
-      if (activeViewId === input.id) activeViewId = project.views[0]?.id || null;
+      if (activeViewId === input.id) {
+        // Prefer the latest surviving version of the same lineage; otherwise the
+        // first remaining view.
+        const sibling = project.views
+          .filter((v) => gone && v.lineage === gone.lineage)
+          .sort((a, b) => b.version - a.version)[0];
+        activeViewId = (sibling || project.views[0])?.id || null;
+      }
       persist();
       renderTabs();
       renderActiveView();
@@ -169,11 +234,16 @@ function confirmDialog({ title = 'Are you sure?', message = '', confirmLabel = '
 function renderTabs() {
   const tabs = $('#canvas-tabs');
   tabs.innerHTML = '';
-  for (const v of project.views) {
+  let prevLineage = null;
+  for (const v of orderedViews()) {
     const tab = document.createElement('div');
-    tab.className = 'tab' + (v.id === activeViewId ? ' active' : '');
+    // Gap before the first tab of each new lineage so versions of one view read
+    // as a group in the strip.
+    const groupStart = prevLineage !== null && v.lineage !== prevLineage;
+    tab.className = 'tab' + (v.id === activeViewId ? ' active' : '') + (groupStart ? ' lineage-start' : '');
+    prevLineage = v.lineage;
     const label = document.createElement('span');
-    label.textContent = v.title;
+    label.textContent = `${v.title} v${v.version}`;
     label.onclick = () => { activeViewId = v.id; persist(); renderTabs(); renderActiveView(); };
     const x = document.createElement('span');
     x.className = 'x';
@@ -183,7 +253,7 @@ function renderTabs() {
       e.stopPropagation();
       const ok = await confirmDialog({
         title: 'Close this view?',
-        message: `“${v.title}” will be deleted permanently. This cannot be undone.`,
+        message: `“${v.title} v${v.version}” will be deleted permanently. This cannot be undone.`,
         confirmLabel: 'Delete view',
       });
       if (ok) dispatch('delete_view', { id: v.id });
@@ -336,7 +406,7 @@ async function onSend(e) {
       provider: project.settings.provider,
       baseUrl: project.settings.baseUrl,
       model: project.settings.model,
-      system: SYSTEM,
+      system: SYSTEM + canvasContext(),
       messages: project.chat,
       tools: TOOLS,
       dispatch,

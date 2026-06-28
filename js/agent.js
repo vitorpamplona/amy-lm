@@ -65,7 +65,10 @@ Guidance:
 - Prefer api.query for fetch-once lists; use api.subscribe only for live feeds.
 - When the user references an account by npub, convert with api.nip19.toHexPubkey before using it in filters (authors are hex).
 
-When you update an existing view, reuse its id and call read_view(id) first to fetch its current code, then edit that code rather than rewriting it from memory — older code is dropped from the chat to save context, so do not rely on the history for it. Use list_views to find ids. Keep titles short. After building, briefly tell the user what you made in one or two sentences. Do not paste the full code into the chat.`;
+## Views are versioned
+Each change to a view creates a NEW version (a new tab) instead of overwriting the old one, so the user can compare them side by side and delete the stale one when ready. When the user asks to change an existing view, call read_view first to fetch its current code (older code is dropped from the chat to save context, so never edit from memory), then call save_view with fromId set to that view's id — this produces the next version in the same lineage. Do NOT pass the id field to overwrite in place unless you are correcting a mistake in a version you JUST made.
+
+Every turn you receive a "Current canvas" section listing each view's lineage, its versions, and which one the user is currently looking at. Use it to resolve references like "this view", "the current one", "go back", or "v2" — do not guess from chat history. Call list_views if you need the full grouped picture again. Keep titles short and identical across a view's versions (do not add "v2" yourself — the version number is shown automatically). After building, tell the user in one or two sentences what you made and which version it is, e.g. "Created Feed v4 with avatars." Do not paste the full code into the chat.`;
 
 // ---------------------------------------------------------------------------
 // Tool definitions (Anthropic-shaped; llm.js translates them per provider).
@@ -74,12 +77,13 @@ When you update an existing view, reuse its id and call read_view(id) first to f
 export const TOOLS = [
   {
     name: 'save_view',
-    description: 'Create or update a view (an interface rendered on the canvas). Provide a short title and the render code body.',
+    description: 'Create a view, or improve an existing one as a NEW version. Provide a short title and the render code body. To improve an existing view, pass fromId of the version you are improving — this creates the next version in its lineage as a new tab and leaves the original intact for comparison. Omit both id and fromId to create a brand-new view (its first version). Pass id only to overwrite a version in place (rare — e.g. fixing a mistake you just made).',
     input_schema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'Existing view id to update; omit to create a new one.' },
-        title: { type: 'string', description: 'Short human title for the tab.' },
+        fromId: { type: 'string', description: 'Id of the existing version to improve. Creates the next version (a new tab) in the same lineage, preserving the old one. This is the normal way to edit a view.' },
+        id: { type: 'string', description: 'Overwrite this exact version in place instead of creating a new one. Rare; use only to correct a version you just created.' },
+        title: { type: 'string', description: 'Short human title for the tab. Keep it the SAME across versions of one view; do not append "v2" yourself — the version number is shown automatically.' },
         code: { type: 'string', description: 'JavaScript body of render(root, api). See system instructions.' },
       },
       required: ['title', 'code'],
@@ -87,7 +91,7 @@ export const TOOLS = [
   },
   {
     name: 'list_views',
-    description: 'List the current views with their ids and titles.',
+    description: 'List the current views grouped by lineage, each with its title, its version ids, and which version is active (the one the user is looking at).',
     input_schema: { type: 'object', properties: {} },
   },
   {

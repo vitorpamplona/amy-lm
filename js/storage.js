@@ -26,13 +26,21 @@ const DEFAULTS = {
     pubkey: '',
     profile: null,
   },
-  // Each view: { id, title, code, createdAt }
+  // Each view: { id, title, lineage, version, code, createdAt, state }
+  // lineage groups the successive versions of one logical view; version is 1-based.
   views: [],
   // Anthropic-shaped message history: { role, content }
   chat: [],
 };
 
 function deepClone(o) { return JSON.parse(JSON.stringify(o)); }
+
+// Backfill versioning on views saved before lineages existed: each old view
+// becomes the sole (v1) member of its own lineage.
+function migrateView(v) {
+  if (v.lineage && v.version) return v;
+  return { ...v, lineage: v.lineage || v.id, version: v.version || 1 };
+}
 
 export function load() {
   try {
@@ -44,7 +52,7 @@ export function load() {
       ...deepClone(DEFAULTS),
       ...parsed,
       settings: { ...DEFAULTS.settings, ...(parsed.settings || {}) },
-      views: parsed.views || [],
+      views: (parsed.views || []).map(migrateView),
       chat: parsed.chat || [],
     };
   } catch (e) {
