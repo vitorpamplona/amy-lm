@@ -79,6 +79,8 @@ python3 -m http.server 8000
 | `js/llm.js`      | Claude, OpenAI, Gemini **and** OpenAI-compatible API client + the shared tool-use loop. |
 | `js/nostr.js`    | Relay pool (query/subscribe/publish/count/search), NIP-42 relay AUTH, NIP-45 counts, NIP-50 search, NIP-07 signer, NIP-19 bech32. |
 | `js/views.js`    | Runtime that executes a generated view into the page with an `api`.   |
+| `js/nsite.js`    | Export the project as a NIP-5A static website (manifest + icons + OpenGraph), bundling the view runtime so the published site runs. |
+| `js/blossom.js`  | Minimal Blossom client (BUD-02 upload + kind 10063 server list) used by the nsite export. |
 | `js/storage.js`  | Persists the whole project to `localStorage`.                         |
 | `js/theme.js`    | Light/dark theme preference (persisted separately, survives reset).   |
 
@@ -100,6 +102,25 @@ element to populate; `api` exposes `query`, `subscribe`, `publish`, `count`,
 `signer`, `nip19`, a tiny `el()` DOM helper, `timeAgo()`, and per-view `getState`/
 `setState`. A view may return an unsubscribe function for live feeds, which
 Amy calls when the view is closed.
+
+## Export as nsite (NIP-5A)
+
+The menu's **Export as nsite** turns your project into a self-contained static
+website published on Nostr ([NIP-5A](https://github.com/nostr-protocol/nips/blob/master/5A.md)).
+A guided dialog lets you pick a **named** site (a short id under your key) or your
+**root** site, edit the title/description, and choose Blossom servers (prefilled
+from your kind 10063 list, falling back to public defaults). On export Amy:
+
+1. bundles the real view runtime (`views.js`/`nostr.js`/…) plus a small bootstrap
+   and your views' code, and generates `index.html`, a `404.html`, a favicon, an
+   Apple touch icon, and an OpenGraph preview image — so the site is complete and
+   actually *runs* in any nsite-aware client;
+2. uploads every file to your Blossom servers (one signer prompt), and
+3. publishes a signed manifest (kind 35128 / 15128) to your relays (one more).
+
+You then get the shareable `…nsite.lol` address. Two caveats: the published site
+executes your view code on its own domain, and uploads need a Blossom server that
+allows browser (CORS) access — most public ones do.
 
 ## Security notes
 

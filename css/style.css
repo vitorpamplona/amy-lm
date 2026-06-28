@@ -515,6 +515,54 @@ dialog.confirm { width: min(680px, 92vw); }
 }
 
 /* ---------------------------------------------------------------------------
+   Export as nsite (NIP-5A) wizard
+--------------------------------------------------------------------------- */
+#nsite-dialog { width: min(560px, 94vw); }
+#nsite-form { padding: 22px; display: flex; flex-direction: column; gap: 16px; }
+#nsite-form h3 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
+#nsite-form h4 { margin: 0; font-size: 16px; }
+#nsite-form .muted { font-size: 13px; line-height: 1.55; margin: 0; }
+.nsite-stage { display: flex; flex-direction: column; gap: 16px; }
+#nsite-form label { display: flex; flex-direction: column; gap: 5px; font-weight: 600; }
+#nsite-form label small { font-weight: 400; }
+#nsite-form input[type="text"], #nsite-form textarea {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  border-radius: var(--radius-sm); padding: 9px 11px; font: inherit;
+}
+#nsite-form input[type="text"]:focus-visible, #nsite-form textarea:focus-visible {
+  outline: none; border-color: var(--accent); box-shadow: var(--ring);
+}
+#nsite-form textarea { resize: vertical; }
+#nsite-form menu { display: flex; justify-content: flex-end; gap: 8px; margin: 4px 0 0; padding: 0; }
+.nsite-radio, .nsite-check { display: flex; align-items: flex-start; gap: 9px; font-weight: 400; }
+.nsite-radio input, .nsite-check input { margin-top: 3px; flex: 0 0 auto; }
+.nsite-radio span { line-height: 1.45; }
+#nsite-url-preview { font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+
+/* Progress stage */
+.nsite-progress { height: 6px; background: var(--panel-3); border-radius: 999px; overflow: hidden; }
+#nsite-progress-fill { height: 100%; width: 0; background: var(--accent); transition: width .25s ease; }
+.nsite-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.nsite-log li { display: flex; align-items: baseline; gap: 9px; font-size: 13px; color: var(--muted); }
+.nsite-log li::before { content: "○"; color: var(--muted); }
+.nsite-log li.run { color: var(--text); }
+.nsite-log li.run::before { content: "◌"; color: var(--accent); }
+.nsite-log li.ok::before { content: "✓"; color: var(--ok); }
+.nsite-log li.err { color: var(--danger); }
+.nsite-log li.err::before { content: "✕"; color: var(--danger); }
+.nsite-log .nsite-detail { color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+
+/* Done stage */
+.nsite-done-icon {
+  width: 46px; height: 46px; align-self: center; display: grid; place-items: center;
+  border-radius: 999px; font-size: 24px; color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+}
+#nsite-form .nsite-stage[data-stage="done"] { text-align: center; align-items: center; }
+#nsite-form .nsite-stage[data-stage="done"] .field { text-align: left; width: 100%; }
+#nsite-url { width: 100%; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+
+/* ---------------------------------------------------------------------------
    Markdown output (api.md())
 --------------------------------------------------------------------------- */
 .md { color: var(--text); line-height: 1.6; }
