@@ -11,6 +11,7 @@
 
 import * as nostr from './nostr.js';
 import { markdown } from './markdown.js';
+import * as social from './social.js';
 
 // The AsyncFunction constructor isn't a global, so reach it via an async fn's
 // prototype. Compiling view code with it lets views use top-level `await`.
@@ -98,6 +99,21 @@ function makeApi(ctx) {
     // Render markdown text to a <div class="md"> DOM element. Use this to
     // display the string returned by api.agent(), which is markdown.
     md: markdown,
+    // NIP-22/NIP-73 social-layer helpers for the browser. Pure (no network):
+    // resolve a URL or Nostr event into one "scope", then build queries /
+    // comment (kind 1111) / reaction (kind 7) drafts that work the same whether
+    // the target is a web app (URL via NIP-73 i/k tags) or an nsite/nappet
+    // (the Nostr event itself). Pass the drafts to api.publish.
+    social: {
+      resolveScope: social.resolveScope,
+      webUrlBuckets: social.webUrlBuckets,
+      normalizeWebUrl: social.normalizeWebUrl,
+      webBucketUrls: social.webBucketUrls,
+      webBucketOf: social.webBucketOf,
+      activityFilter: social.activityFilter,
+      draftComment: social.draftComment,
+      draftReaction: social.draftReaction,
+    },
     // per-view persisted state (survives reloads)
     getState: ctx.getState,
     setState: ctx.setState,
